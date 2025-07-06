@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/authController");
-const upload = require("../middlewares/uploadMiddleware");
+const upload = require("../middlewares/multer");
 
 router.post("/signup", upload.single("profileImage"), authController.signup);
 router.get("/activate-account/:token", authController.activateAccount);

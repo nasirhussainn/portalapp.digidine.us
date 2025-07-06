@@ -5,13 +5,18 @@ const dayjs = require("dayjs");
 const db = require("../config/db");
 const { sendActivationEmail, sendResetEmail } = require("../utils/email");
 const { insertInterest, createUploadDir } = require("../utils/helpers");
-
+const fs = require("fs");
+const path = require("path");
 
 // Ensure upload dir exists
 createUploadDir();
 
+const uploadDir = path.join(__dirname, "..", "uploads", "profile_images");
+
 exports.signup = async (req, res) => {
   const connection = await db.getConnection();
+  let profileImageFileName = null;
+
   try {
     await connection.beginTransaction();
 
@@ -33,13 +38,23 @@ exports.signup = async (req, res) => {
     );
     const userId = userResult.insertId;
 
-    const profileImagePath = req.file ? `/uploads/profile_images/${req.file.filename}` : null;
+    // ✅ Save image to disk only after DB is successful
+    let profileImagePath = null;
+    if (req.file) {
+      profileImageFileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`;
+      const fullImagePath = path.join(uploadDir, profileImageFileName);
+      fs.writeFileSync(fullImagePath, req.file.buffer);
+      profileImagePath = `/uploads/profile_images/${profileImageFileName}`;
+    }
 
     await connection.query(
       `INSERT INTO user_profiles 
         (user_id, profile_image, first_name, last_name, contact_email, date_of_birth, address, city, state, zip_code, short_description, long_description)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [userId, profileImagePath, firstName, lastName, contactEmail, dateOfBirth, address, city, state, zipCode, shortDescription, longDescription]
+      [
+        userId, profileImagePath, firstName, lastName, contactEmail,
+        dateOfBirth, address, city, state, zipCode, shortDescription, longDescription
+      ]
     );
 
     await connection.query(
@@ -47,8 +62,12 @@ exports.signup = async (req, res) => {
       [userId, availability]
     );
 
-    const categoryIds = await Promise.all(JSON.parse(categories || "[]").map(c => insertInterest(connection, c, "category")));
-    const keywordIds = await Promise.all(JSON.parse(keywords || "[]").map(k => insertInterest(connection, k, "keyword")));
+    const categoryIds = await Promise.all(
+      JSON.parse(categories || "[]").map((c) => insertInterest(connection, c, "category"))
+    );
+    const keywordIds = await Promise.all(
+      JSON.parse(keywords || "[]").map((k) => insertInterest(connection, k, "keyword"))
+    );
 
     for (const id of categoryIds) {
       await connection.query(
@@ -67,10 +86,25 @@ exports.signup = async (req, res) => {
     await connection.commit();
     await sendActivationEmail(email, activationToken);
 
-    res.json({ message: "Signup successful. Please check your email to activate your account." });
+    res.json({
+      message: "Signup successful. Please check your email to activate your account.",
+    });
+
   } catch (error) {
-    console.error(error);
+    console.error("❌ Signup error:", error);
     await connection.rollback();
+
+    // ❗ If image was saved before crash, remove it
+    if (profileImageFileName) {
+      const imagePath = path.join(uploadDir, profileImageFileName);
+      if (fs.existsSync(imagePath)) {
+        fs.unlink(imagePath, (err) => {
+          if (err) console.error("❌ Failed to delete uploaded image:", err);
+          else console.log("🧹 Uploaded image deleted due to signup failure.");
+        });
+      }
+    }
+
     res.status(500).json({ error: "Signup failed" });
   } finally {
     connection.release();
@@ -80,11 +114,22 @@ exports.signup = async (req, res) => {
 exports.activateAccount = async (req, res) => {
   const { token } = req.params;
   try {
-    const [results] = await db.execute("SELECT * FROM users WHERE activation_token = ?", [token]);
-    if (!results.length) return res.status(400).json({ message: "Your activation link has expired. Please request a new one" });
+    const [results] = await db.execute(
+      "SELECT * FROM users WHERE activation_token = ?",
+      [token]
+    );
+    if (!results.length)
+      return res
+        .status(400)
+        .json({
+          message: "Your activation link has expired. Please request a new one",
+        });
 
     const user = results[0];
-    await db.execute("UPDATE users SET is_active = true, activation_token = NULL WHERE id = ?", [user.id]);
+    await db.execute(
+      "UPDATE users SET is_active = true, activation_token = NULL WHERE id = ?",
+      [user.id]
+    );
     res.json({ message: "Account activated!" });
   } catch (err) {
     console.error("❌ Activation error:", err);
@@ -93,30 +138,35 @@ exports.activateAccount = async (req, res) => {
 };
 
 exports.resendActivationEmail = async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required" });
-  
-    try {
-      const [results] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
-  
-      if (!results.length)
-        return res.status(404).json({ message: "User not found" });
-  
-      const user = results[0];
-      if (user.is_active)
-        return res.status(400).json({ message: "Account already activated" });
-  
-      const newToken = crypto.randomBytes(20).toString("hex");
-      await db.execute("UPDATE users SET activation_token = ? WHERE email = ?", [newToken, email]);
-      await sendActivationEmail(email, newToken);
-  
-      res.json({ message: "Activation email resent. Please check your inbox." });
-    } catch (err) {
-      console.error("Resend activation error:", err);
-      res.status(500).json({ message: "Failed to resend activation email" });
-    }
-  };
-  
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ message: "Email is required" });
+
+  try {
+    const [results] = await db.execute("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
+
+    if (!results.length)
+      return res.status(404).json({ message: "User not found" });
+
+    const user = results[0];
+    if (user.is_active)
+      return res.status(400).json({ message: "Account already activated" });
+
+    const newToken = crypto.randomBytes(20).toString("hex");
+    await db.execute("UPDATE users SET activation_token = ? WHERE email = ?", [
+      newToken,
+      email,
+    ]);
+    await sendActivationEmail(email, newToken);
+
+    res.json({ message: "Activation email resent. Please check your inbox." });
+  } catch (err) {
+    console.error("Resend activation error:", err);
+    res.status(500).json({ message: "Failed to resend activation email" });
+  }
+};
+
 exports.login = async (req, res) => {
   const { email, password } = req.body;
 
@@ -124,7 +174,9 @@ exports.login = async (req, res) => {
     return res.status(400).json({ message: "Email and password are required" });
 
   try {
-    const [results] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
+    const [results] = await db.execute("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
     if (results.length === 0)
       return res.status(400).json({ message: "User not found" });
 
@@ -133,11 +185,16 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: "Account not activated" });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch)
-      return res.status(400).json({ message: "Invalid password" });
+    if (!isMatch) return res.status(400).json({ message: "Invalid password" });
 
-    const accessToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: "1h" });
-    const refreshToken = jwt.sign({ id: user.id }, process.env.JWT_REFRESH_SECRET, { expiresIn: "7d" });
+    const accessToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
+    const refreshToken = jwt.sign(
+      { id: user.id },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: "7d" }
+    );
     res.json({ message: "Login successful", accessToken, refreshToken });
   } catch (err) {
     console.error("❌ Login error:", err);
@@ -147,11 +204,12 @@ exports.login = async (req, res) => {
 
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
-  if (!email)
-    return res.status(400).json({ message: "Email is required" });
+  if (!email) return res.status(400).json({ message: "Email is required" });
 
   try {
-    const [results] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
+    const [results] = await db.execute("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
     if (!results.length)
       return res.status(400).json({ message: "User not found" });
 
@@ -203,26 +261,24 @@ exports.resetPassword = async (req, res) => {
 };
 
 exports.refreshToken = async (req, res) => {
-    const { refreshToken } = req.body;
-    if (!refreshToken) return res.status(400).json({ message: "Refresh token required" });
-  
-    try {
-      const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-  
-      const accessToken = jwt.sign(
-        { id: decoded.id },
-        process.env.JWT_SECRET,
-        { expiresIn: "1h" }
-      );
-  
-      res.json({ accessToken });
-    } catch (err) {
-      res.status(403).json({ message: "Invalid refresh token" });
-    }
-  };
+  const { refreshToken } = req.body;
+  if (!refreshToken)
+    return res.status(400).json({ message: "Refresh token required" });
 
-  exports.logout = (req, res) => {
-    // Optionally blacklist token (advanced)
-    res.json({ message: "Logout successful" });
-  };
-  
+  try {
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+
+    const accessToken = jwt.sign({ id: decoded.id }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
+
+    res.json({ accessToken });
+  } catch (err) {
+    res.status(403).json({ message: "Invalid refresh token" });
+  }
+};
+
+exports.logout = (req, res) => {
+  // Optionally blacklist token (advanced)
+  res.json({ message: "Logout successful" });
+};

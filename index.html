@@ -28,7 +28,7 @@
             event.preventDefault();
             const formData = new FormData(event.target);
 
-            const response = await fetch('http://localhost:3000/upload', {
+            const response = await fetch(`${process.env.CLIENT_URL}/upload`, {
                 method: 'POST',
                 body: formData
             });
@@ -39,7 +39,7 @@
         // Handle image retrieval
         async function retrieveImage() {
             const imageId = document.getElementById('imageId').value;
-            const response = await fetch(`http://localhost:3000/image/${imageId}`);
+            const response = await fetch(`${process.env.CLIENT_URL}/image/${imageId}`);
             if (response.ok) {
                 const blob = await response.blob();
                 const imageUrl = URL.createObjectURL(blob);

@@ -33,3 +33,5 @@ coverage/
 
 # Ignore all CSV files
 *.csv
+
+uploads/

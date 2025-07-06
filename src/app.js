@@ -2,12 +2,15 @@ const express = require('express');
 const app = express();
 const path = require("path");
 const authRoutes = require('./routes/authRoutes');
+const accountRoutes = require('./routes/accountRoutes');
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api/auth', authRoutes)
+app.use('/api/account', accountRoutes)
 
 
 // Default error handler

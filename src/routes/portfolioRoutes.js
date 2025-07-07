@@ -24,5 +24,8 @@ router.put(
 router.get("/get-all", portfolioController.getAllPortfolios);
 router.get("/get-by-id/:portfolio_id", portfolioController.getPortfolioById);
 router.get("/get-by-user/:user_id", portfolioController.getPortfoliosByUser);
+router.delete("/delete/:portfolio_id", portfolioController.deletePortfolioById);
+router.delete("/delete-by-user/:user_id", portfolioController.deletePortfoliosByUser);
+
 
 module.exports = router;

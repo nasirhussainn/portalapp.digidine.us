@@ -178,42 +178,75 @@ exports.getPremiumUsers = async (_, res) => {
 };
 
 exports.deleteAccount = async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ message: "Email is required" });
+  const userId = req.params.user_id;
+  if (!userId) return res.status(400).json({ message: "User ID is required" });
 
   const connection = await db.getConnection();
   try {
-    const [[user]] = await connection.query(
-      "SELECT id FROM users WHERE email = ?",
-      [email]
-    );
-    if (!user) return res.status(404).json({ message: "User not found" });
+    await connection.beginTransaction();
 
+    // ✅ Check if user exists
+    const [[user]] = await connection.query("SELECT id FROM users WHERE id = ?", [userId]);
+    if (!user) {
+      await connection.rollback();
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // 🔍 Get profile image to delete
     const [[profile]] = await connection.query(
       "SELECT profile_image FROM user_profiles WHERE user_id = ?",
-      [user.id]
+      [userId]
     );
-    const imagePath = profile?.profile_image
+    const profileImagePath = profile?.profile_image
       ? path.join(__dirname, "..", profile.profile_image)
       : null;
 
-    await connection.query("DELETE FROM users WHERE id = ?", [user.id]);
-    // Related tables will auto-clean via ON DELETE CASCADE
+    // 🔍 Get portfolio media paths
+    const [portfolios] = await connection.query(
+      "SELECT id, video FROM user_portfolio WHERE user_id = ?",
+      [userId]
+    );
 
-    if (imagePath && fs.existsSync(imagePath)) {
-      fs.unlink(imagePath, (err) => {
-        if (err) console.error("❌ Error deleting profile image:", err);
-      });
+    const videoPaths = portfolios
+      .filter(p => p.video)
+      .map(p => path.join(__dirname, "..", p.video));
+
+    const portfolioIds = portfolios.map(p => p.id);
+
+    let imagePaths = [];
+    if (portfolioIds.length > 0) {
+      const [images] = await connection.query(
+        `SELECT image FROM portfolio_images WHERE portfolio_id IN (?)`,
+        [portfolioIds]
+      );
+      imagePaths = images.map(img => path.join(__dirname, "..", img.image));
     }
 
-    res.json({ message: "Account deleted successfully" });
+    // ❌ Delete user (cascades all related tables)
+    await connection.query("DELETE FROM users WHERE id = ?", [userId]);
+
+    await connection.commit();
+
+    // 🧹 Delete all files from disk after DB commit
+    const allPaths = [profileImagePath, ...videoPaths, ...imagePaths];
+    for (const filePath of allPaths) {
+      if (filePath && fs.existsSync(filePath)) {
+        fs.unlink(filePath, (err) => {
+          if (err) console.error("❌ Failed to delete file:", filePath, err);
+        });
+      }
+    }
+
+    res.json({ message: "Account and all associated data deleted successfully" });
   } catch (err) {
     console.error("❌ Delete account error:", err);
+    await connection.rollback();
     res.status(500).json({ error: "Server error" });
   } finally {
     connection.release();
   }
 };
+
 
 exports.updateProfile = async (req, res) => {
   const {

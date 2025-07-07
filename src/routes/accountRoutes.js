@@ -6,7 +6,7 @@ const upload = require("../middlewares/multer");
 router.get("/get-single", accountController.getSingleUser);
 router.get("/get-all", accountController.getAllUsers);
 router.get("/get-premium-users", accountController.getPremiumUsers);
-router.delete("/delete-account", accountController.deleteAccount);
+router.delete("/delete/:user_id", accountController.deleteAccount);
 router.put("/update-profile", upload.single("profileImage"), accountController.updateProfile);
 router.patch("/update-premium-status", accountController.updatePremiumStatus);
 

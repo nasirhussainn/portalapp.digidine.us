@@ -221,41 +221,74 @@ exports.updatePortfolio = async (req, res) => {
 };
 
 exports.getAllPortfolios = async (req, res) => {
-  try {
-    const [portfolios] = await db.execute(`
-        SELECT 
-          id AS portfolio_id,
-          user_id,
-          title,
-          description,
-          video,
-          created_at,
-          updated_at
-        FROM user_portfolio
-      `);
+  const { premium, page = 1, limit = 10 } = req.query;
+  const isPremiumFilter = premium === "true";
 
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const connection = await db.getConnection();
+  try {
+    // 🔹 Count total matching portfolios
+    const [countRows] = await connection.query(
+      `
+      SELECT COUNT(*) AS total 
+      FROM user_portfolio p 
+      ${isPremiumFilter ? "JOIN users u ON p.user_id = u.id WHERE u.is_premium = TRUE" : ""}
+    `
+    );
+    const total = countRows[0].total;
+
+    // 🔹 Fetch paginated portfolios
+    const [portfolios] = await connection.query(
+      `
+      SELECT 
+        p.id AS portfolio_id,
+        p.user_id,
+        p.title,
+        p.description,
+        p.video,
+        p.created_at,
+        p.updated_at
+      FROM user_portfolio p
+      ${isPremiumFilter ? "JOIN users u ON p.user_id = u.id WHERE u.is_premium = TRUE" : ""}
+      ORDER BY p.created_at DESC
+      LIMIT ? OFFSET ?
+    `,
+      [parseInt(limit), offset]
+    );
+
+    // 🔹 Fetch images and keywords for each portfolio
     for (const portfolio of portfolios) {
-      // 🔹 Fetch images
-      const [images] = await db.execute(
+      const [images] = await connection.query(
         `SELECT image FROM portfolio_images WHERE portfolio_id = ?`,
         [portfolio.portfolio_id]
       );
       portfolio.portfolio_images = images.map((img) => img.image);
 
-      // 🔹 Fetch keywords
-      const [keywords] = await db.execute(
+      const [keywords] = await connection.query(
         `SELECT keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
         [portfolio.portfolio_id]
       );
       portfolio.portfolio_keywords = keywords.map((k) => k.keyword);
     }
 
-    res.json({ data: portfolios });
+    res.json({
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+      data: portfolios
+    });
   } catch (error) {
     console.error("❌ Get all portfolios error:", error);
     res.status(500).json({ message: "Failed to fetch portfolios" });
+  } finally {
+    connection.release();
   }
 };
+
 
 exports.getPortfolioById = async (req, res) => {
   const portfolioId = req.params.portfolio_id;

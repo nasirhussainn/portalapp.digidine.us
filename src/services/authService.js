@@ -202,6 +202,65 @@ exports.login = async (req, res) => {
   }
 };
 
+exports.getCurrentUser = async (req, res) => {
+  const connection = await db.getConnection();
+  try {
+    const userId = req.user.id;
+
+    // Get base user
+    const [users] = await connection.query(
+      "SELECT id, email, is_premium, is_active, created_at, updated_at FROM users WHERE id = ?",
+      [userId]
+    );
+    if (!users.length)
+      return res.status(404).json({ message: "User not found" });
+
+    const user = users[0];
+
+    // Get profile
+    const [profile] = await connection.query(
+      "SELECT * FROM user_profiles WHERE user_id = ?",
+      [user.id]
+    );
+
+    // Get availability
+    const [availability] = await connection.query(
+      "SELECT availability FROM user_availability WHERE user_id = ?",
+      [user.id]
+    );
+
+    // Get interests
+    const [categories] = await connection.query(
+      `SELECT c.id, c.name FROM user_interests ui
+       JOIN categories c ON ui.category_id = c.id
+       WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
+      [user.id]
+    );
+
+    const [keywords] = await connection.query(
+      `SELECT k.id, k.name FROM user_interests ui
+       JOIN keywords k ON ui.keyword_id = k.id
+       WHERE ui.user_id = ? AND ui.interest_type = 'keyword'`,
+      [user.id]
+    );
+
+    res.json({
+      ...user,
+      profile: profile[0] || {},
+      availability: availability[0]?.availability || null,
+      interests: {
+        categories,
+        keywords,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Get current user error:", err);
+    res.status(500).json({ error: "Server error" });
+  } finally {
+    connection.release();
+  }
+};
+
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ message: "Email is required" });

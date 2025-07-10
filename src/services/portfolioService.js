@@ -259,11 +259,19 @@ exports.getAllPortfolios = async (req, res) => {
 
     // 🔹 Fetch images and keywords for each portfolio
     for (const portfolio of portfolios) {
+
+      if (portfolio.video) {
+        portfolio.video = process.env.CLIENT_URL + portfolio.video;
+      }
+
       const [images] = await connection.query(
         `SELECT image FROM portfolio_images WHERE portfolio_id = ?`,
         [portfolio.portfolio_id]
       );
-      portfolio.portfolio_images = images.map((img) => img.image);
+      portfolio.portfolio_images = images.map((img) =>
+        process.env.CLIENT_URL + img.image
+      );
+      
 
       const [keywords] = await connection.query(
         `SELECT keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
@@ -315,12 +323,17 @@ exports.getPortfolioById = async (req, res) => {
 
     const portfolio = rows[0];
 
+    if (portfolio.video) {
+      portfolio.video = process.env.CLIENT_URL + portfolio.video;
+    }
     // 🔹 Fetch images
     const [images] = await db.execute(
       `SELECT image FROM portfolio_images WHERE portfolio_id = ?`,
       [portfolio.portfolio_id]
     );
-    portfolio.portfolio_images = images.map((img) => img.image);
+    portfolio.portfolio_images = images.map((img) =>
+      process.env.CLIENT_URL + img.image
+    );
 
     // 🔹 Fetch keywords
     const [keywords] = await db.execute(
@@ -356,12 +369,19 @@ exports.getPortfoliosByUser = async (req, res) => {
     );
 
     for (const portfolio of portfolios) {
+
+      if (portfolio.video) {
+        portfolio.video = process.env.CLIENT_URL + portfolio.video;
+      }
+      
       // 🔹 Fetch images
       const [images] = await db.execute(
         `SELECT image FROM portfolio_images WHERE portfolio_id = ?`,
         [portfolio.portfolio_id]
       );
-      portfolio.portfolio_images = images.map((img) => img.image);
+      portfolio.portfolio_images = images.map((img) =>
+        process.env.CLIENT_URL + img.image
+      );
 
       // 🔹 Fetch keywords
       const [keywords] = await db.execute(

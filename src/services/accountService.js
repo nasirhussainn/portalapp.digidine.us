@@ -49,9 +49,14 @@ exports.getSingleUser = async (req, res) => {
       [user.id]
     );
 
+    const userProfile = profile[0] || {};
+    if (userProfile.profile_image) {
+      userProfile.profile_image =
+        process.env.CLIENT_URL + userProfile.profile_image;
+    }
     res.json({
       ...user,
-      profile: profile[0] || {},
+      profile: userProfile,
       availability: availability[0]?.availability || null,
       interests: {
         categories,
@@ -65,7 +70,6 @@ exports.getSingleUser = async (req, res) => {
     connection.release();
   }
 };
-
 
 exports.getAllUsers = async (req, res) => {
   const connection = await db.getConnection();
@@ -137,9 +141,15 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
+        const userProfile = profile[0] || {};
+        if (userProfile.profile_image) {
+          userProfile.profile_image =
+            process.env.CLIENT_URL + userProfile.profile_image;
+        }
+
         return {
           ...user,
-          profile: profile[0] || {},
+          profile: userProfile,
           availability: availability[0]?.availability || null,
           interests: {
             categories,
@@ -164,16 +174,66 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-
 exports.getPremiumUsers = async (_, res) => {
+  const connection = await db.getConnection();
+
   try {
-    const [results] = await db.execute(
-      "SELECT * FROM users WHERE is_premium = true"
+    const [users] = await connection.query(
+      `SELECT id, email, is_premium, is_active, created_at, updated_at 
+       FROM users 
+       WHERE is_premium = true`
     );
-    res.json(results);
+
+    const enrichedUsers = await Promise.all(
+      users.map(async (user) => {
+        const [profile] = await connection.query(
+          "SELECT * FROM user_profiles WHERE user_id = ?",
+          [user.id]
+        );
+
+        const [availability] = await connection.query(
+          "SELECT availability FROM user_availability WHERE user_id = ?",
+          [user.id]
+        );
+
+        const [categories] = await connection.query(
+          `SELECT c.id, c.name FROM user_interests ui
+           JOIN categories c ON ui.category_id = c.id
+           WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
+          [user.id]
+        );
+
+        const [keywords] = await connection.query(
+          `SELECT k.id, k.name FROM user_interests ui
+           JOIN keywords k ON ui.keyword_id = k.id
+           WHERE ui.user_id = ? AND ui.interest_type = 'keyword'`,
+          [user.id]
+        );
+
+        const userProfile = profile[0] || {};
+        if (userProfile.profile_image) {
+          userProfile.profile_image =
+            process.env.CLIENT_URL + userProfile.profile_image;
+        }
+
+        return {
+          ...user,
+          profile: userProfile,
+          availability: availability[0]?.availability || null,
+          interests: {
+            categories,
+            keywords,
+          },
+        };
+      })
+    );
+
+    res.json(enrichedUsers);
   } catch (err) {
     console.error("❌ Get premium users error:", err);
     res.status(500).json({ error: "Server error" });
+  } finally {
+    connection.release();
   }
 };
 
@@ -186,7 +246,10 @@ exports.deleteAccount = async (req, res) => {
     await connection.beginTransaction();
 
     // ✅ Check if user exists
-    const [[user]] = await connection.query("SELECT id FROM users WHERE id = ?", [userId]);
+    const [[user]] = await connection.query(
+      "SELECT id FROM users WHERE id = ?",
+      [userId]
+    );
     if (!user) {
       await connection.rollback();
       return res.status(404).json({ message: "User not found" });
@@ -208,10 +271,10 @@ exports.deleteAccount = async (req, res) => {
     );
 
     const videoPaths = portfolios
-      .filter(p => p.video)
-      .map(p => path.join(__dirname, "..", p.video));
+      .filter((p) => p.video)
+      .map((p) => path.join(__dirname, "..", p.video));
 
-    const portfolioIds = portfolios.map(p => p.id);
+    const portfolioIds = portfolios.map((p) => p.id);
 
     let imagePaths = [];
     if (portfolioIds.length > 0) {
@@ -219,7 +282,7 @@ exports.deleteAccount = async (req, res) => {
         `SELECT image FROM portfolio_images WHERE portfolio_id IN (?)`,
         [portfolioIds]
       );
-      imagePaths = images.map(img => path.join(__dirname, "..", img.image));
+      imagePaths = images.map((img) => path.join(__dirname, "..", img.image));
     }
 
     // ❌ Delete user (cascades all related tables)
@@ -237,7 +300,9 @@ exports.deleteAccount = async (req, res) => {
       }
     }
 
-    res.json({ message: "Account and all associated data deleted successfully" });
+    res.json({
+      message: "Account and all associated data deleted successfully",
+    });
   } catch (err) {
     console.error("❌ Delete account error:", err);
     await connection.rollback();
@@ -246,7 +311,6 @@ exports.deleteAccount = async (req, res) => {
     connection.release();
   }
 };
-
 
 exports.updateProfile = async (req, res) => {
   const {
@@ -370,7 +434,13 @@ exports.updateProfile = async (req, res) => {
 
     // ✅ Now save the image only if commit was successful
     if (tempBuffer && imageFilename) {
-      const diskPath = path.join(__dirname, "..", "uploads", "profile_images", imageFilename);
+      const diskPath = path.join(
+        __dirname,
+        "..",
+        "uploads",
+        "profile_images",
+        imageFilename
+      );
       fs.writeFileSync(diskPath, tempBuffer);
     }
 
@@ -391,7 +461,6 @@ exports.updateProfile = async (req, res) => {
     connection.release();
   }
 };
-
 
 exports.updatePremiumStatus = async (req, res) => {
   const { email, isPremium } = req.body;

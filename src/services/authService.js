@@ -244,9 +244,14 @@ exports.getCurrentUser = async (req, res) => {
       [user.id]
     );
 
+    const userProfile = profile[0] || {};
+    if (userProfile.profile_image) {
+      userProfile.profile_image = process.env.CLIENT_URL + userProfile.profile_image;
+    }
+
     res.json({
       ...user,
-      profile: profile[0] || {},
+      profile: userProfile,
       availability: availability[0]?.availability || null,
       interests: {
         categories,
@@ -260,6 +265,7 @@ exports.getCurrentUser = async (req, res) => {
     connection.release();
   }
 };
+
 
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;

@@ -94,9 +94,8 @@ exports.addPortfolio = async (req, res) => {
 };
 
 exports.updatePortfolio = async (req, res) => {
-  const { portfolio_id, title, description, keywords } = req.body;
+  const { portfolio_id, title, description } = req.body;
   const videoFile = req.files?.video?.[0];
-  const imageFiles = req.files?.images || [];
 
   if (!portfolio_id || !title) {
     return res
@@ -123,17 +122,8 @@ exports.updatePortfolio = async (req, res) => {
       ? path.join(__dirname, "..", portfolioRows[0].video)
       : null;
 
-    // ✅ Get old image paths to delete later
-    const [oldImageRows] = await connection.query(
-      "SELECT image FROM portfolio_images WHERE portfolio_id = ?",
-      [portfolio_id]
-    );
-    const oldImagePaths = oldImageRows.map((row) =>
-      path.join(__dirname, "..", row.image)
-    );
-
     // ✅ Prepare new video path
-    let newVideoPath = null;
+    let newVideoPath = portfolioRows[0].video || null;
     let newVideoFullPath = null;
 
     if (videoFile?.buffer) {
@@ -142,50 +132,13 @@ exports.updatePortfolio = async (req, res) => {
       newVideoFullPath = path.join(__dirname, "..", newVideoPath);
     }
 
-    // ✅ Update portfolio main info
+    // ✅ Update title, description, and video
     await connection.query(
       "UPDATE user_portfolio SET title = ?, description = ?, video = ? WHERE id = ?",
       [title, description || null, newVideoPath, portfolio_id]
     );
 
-    // ✅ Delete old keywords and insert new
-    await connection.query(
-      "DELETE FROM portfolio_keywords WHERE portfolio_id = ?",
-      [portfolio_id]
-    );
-
-    const parsedKeywords = JSON.parse(keywords || "[]");
-    for (const kw of parsedKeywords) {
-      await connection.query(
-        "INSERT INTO portfolio_keywords (portfolio_id, keyword) VALUES (?, ?)",
-        [portfolio_id, kw]
-      );
-    }
-
-    // ✅ Delete old image records
-    await connection.query(
-      "DELETE FROM portfolio_images WHERE portfolio_id = ?",
-      [portfolio_id]
-    );
-
-    // ✅ Insert new image records and store files
-    for (const img of imageFiles) {
-      if (!img.buffer) continue;
-
-      const imgName = `${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`;
-      const imgPath = `/uploads/portfolio_images/${imgName}`;
-      const imgFullPath = path.join(__dirname, "..", imgPath);
-
-      fs.writeFileSync(imgFullPath, img.buffer);
-      savedFiles.push(imgFullPath);
-
-      await connection.query(
-        "INSERT INTO portfolio_images (portfolio_id, image) VALUES (?, ?)",
-        [portfolio_id, imgPath]
-      );
-    }
-
-    // ✅ Now save video file (after DB insert succeeds)
+    // ✅ Save new video to disk after DB update
     if (newVideoFullPath && videoFile?.buffer) {
       fs.writeFileSync(newVideoFullPath, videoFile.buffer);
       savedFiles.push(newVideoFullPath);
@@ -193,15 +146,9 @@ exports.updatePortfolio = async (req, res) => {
 
     await connection.commit();
 
-    // 🧹 Delete old files from disk (only after successful commit)
-    if (oldVideoPath && fs.existsSync(oldVideoPath)) {
+    // 🧹 Delete old video only if a new one was uploaded
+    if (videoFile?.buffer && oldVideoPath && fs.existsSync(oldVideoPath)) {
       fs.unlinkSync(oldVideoPath);
-    }
-
-    for (const oldImgPath of oldImagePaths) {
-      if (fs.existsSync(oldImgPath)) {
-        fs.unlinkSync(oldImgPath);
-      }
     }
 
     return res.json({ message: "Portfolio updated successfully." });
@@ -209,7 +156,7 @@ exports.updatePortfolio = async (req, res) => {
     console.error("❌ Update portfolio error:", err);
     await connection.rollback();
 
-    // 🧹 Clean up newly saved files on failure
+    // 🧹 Delete any newly written files
     for (const f of savedFiles) {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     }
@@ -233,7 +180,11 @@ exports.getAllPortfolios = async (req, res) => {
       `
       SELECT COUNT(*) AS total 
       FROM user_portfolio p 
-      ${isPremiumFilter ? "JOIN users u ON p.user_id = u.id WHERE u.is_premium = TRUE" : ""}
+      ${
+        isPremiumFilter
+          ? "JOIN users u ON p.user_id = u.id WHERE u.is_premium = TRUE"
+          : ""
+      }
     `
     );
     const total = countRows[0].total;
@@ -250,7 +201,11 @@ exports.getAllPortfolios = async (req, res) => {
         p.created_at,
         p.updated_at
       FROM user_portfolio p
-      ${isPremiumFilter ? "JOIN users u ON p.user_id = u.id WHERE u.is_premium = TRUE" : ""}
+      ${
+        isPremiumFilter
+          ? "JOIN users u ON p.user_id = u.id WHERE u.is_premium = TRUE"
+          : ""
+      }
       ORDER BY p.created_at DESC
       LIMIT ? OFFSET ?
     `,
@@ -259,25 +214,29 @@ exports.getAllPortfolios = async (req, res) => {
 
     // 🔹 Fetch images and keywords for each portfolio
     for (const portfolio of portfolios) {
-
       if (portfolio.video) {
         portfolio.video = process.env.CLIENT_URL + portfolio.video;
       }
 
+      // ✅ Get image ID + path
       const [images] = await connection.query(
-        `SELECT image FROM portfolio_images WHERE portfolio_id = ?`,
+        `SELECT id, image FROM portfolio_images WHERE portfolio_id = ?`,
         [portfolio.portfolio_id]
       );
-      portfolio.portfolio_images = images.map((img) =>
-        process.env.CLIENT_URL + img.image
-      );
-      
+      portfolio.portfolio_images = images.map((img) => ({
+        id: img.id,
+        url: process.env.CLIENT_URL + img.image,
+      }));
 
+      // ✅ Get keyword ID + value
       const [keywords] = await connection.query(
-        `SELECT keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
+        `SELECT id, keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
         [portfolio.portfolio_id]
       );
-      portfolio.portfolio_keywords = keywords.map((k) => k.keyword);
+      portfolio.portfolio_keywords = keywords.map((k) => ({
+        id: k.id,
+        keyword: k.keyword,
+      }));
     }
 
     res.json({
@@ -287,7 +246,7 @@ exports.getAllPortfolios = async (req, res) => {
         total,
         totalPages: Math.ceil(total / limit),
       },
-      data: portfolios
+      data: portfolios,
     });
   } catch (error) {
     console.error("❌ Get all portfolios error:", error);
@@ -297,7 +256,6 @@ exports.getAllPortfolios = async (req, res) => {
   }
 };
 
-
 exports.getPortfolioById = async (req, res) => {
   const portfolioId = req.params.portfolio_id;
 
@@ -305,15 +263,15 @@ exports.getPortfolioById = async (req, res) => {
     // 🔹 Fetch main portfolio
     const [rows] = await db.execute(
       `SELECT 
-           id AS portfolio_id,
-           user_id,
-           title,
-           description,
-           video,
-           created_at,
-           updated_at
-         FROM user_portfolio
-         WHERE id = ?`,
+         id AS portfolio_id,
+         user_id,
+         title,
+         description,
+         video,
+         created_at,
+         updated_at
+       FROM user_portfolio
+       WHERE id = ?`,
       [portfolioId]
     );
 
@@ -326,21 +284,26 @@ exports.getPortfolioById = async (req, res) => {
     if (portfolio.video) {
       portfolio.video = process.env.CLIENT_URL + portfolio.video;
     }
-    // 🔹 Fetch images
-    const [images] = await db.execute(
-      `SELECT image FROM portfolio_images WHERE portfolio_id = ?`,
-      [portfolio.portfolio_id]
-    );
-    portfolio.portfolio_images = images.map((img) =>
-      process.env.CLIENT_URL + img.image
-    );
 
-    // 🔹 Fetch keywords
-    const [keywords] = await db.execute(
-      `SELECT keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
+    // 🔹 Fetch images (with ID + path)
+    const [images] = await db.execute(
+      `SELECT id, image FROM portfolio_images WHERE portfolio_id = ?`,
       [portfolio.portfolio_id]
     );
-    portfolio.portfolio_keywords = keywords.map((k) => k.keyword);
+    portfolio.portfolio_images = images.map((img) => ({
+      id: img.id,
+      url: process.env.CLIENT_URL + img.image
+    }));
+
+    // 🔹 Fetch keywords (with ID + keyword)
+    const [keywords] = await db.execute(
+      `SELECT id, keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
+      [portfolio.portfolio_id]
+    );
+    portfolio.portfolio_keywords = keywords.map((k) => ({
+      id: k.id,
+      keyword: k.keyword
+    }));
 
     res.json({ data: portfolio });
   } catch (err) {
@@ -356,39 +319,42 @@ exports.getPortfoliosByUser = async (req, res) => {
     // 🔹 Fetch all portfolios by user
     const [portfolios] = await db.execute(
       `SELECT 
-           id AS portfolio_id,
-           user_id,
-           title,
-           description,
-           video,
-           created_at,
-           updated_at
-         FROM user_portfolio
-         WHERE user_id = ?`,
+         id AS portfolio_id,
+         user_id,
+         title,
+         description,
+         video,
+         created_at,
+         updated_at
+       FROM user_portfolio
+       WHERE user_id = ?`,
       [userId]
     );
 
     for (const portfolio of portfolios) {
-
       if (portfolio.video) {
         portfolio.video = process.env.CLIENT_URL + portfolio.video;
       }
-      
-      // 🔹 Fetch images
-      const [images] = await db.execute(
-        `SELECT image FROM portfolio_images WHERE portfolio_id = ?`,
-        [portfolio.portfolio_id]
-      );
-      portfolio.portfolio_images = images.map((img) =>
-        process.env.CLIENT_URL + img.image
-      );
 
-      // 🔹 Fetch keywords
-      const [keywords] = await db.execute(
-        `SELECT keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
+      // 🔹 Fetch images with ID + path
+      const [images] = await db.execute(
+        `SELECT id, image FROM portfolio_images WHERE portfolio_id = ?`,
         [portfolio.portfolio_id]
       );
-      portfolio.portfolio_keywords = keywords.map((k) => k.keyword);
+      portfolio.portfolio_images = images.map((img) => ({
+        id: img.id,
+        url: process.env.CLIENT_URL + img.image
+      }));
+
+      // 🔹 Fetch keywords with ID + keyword
+      const [keywords] = await db.execute(
+        `SELECT id, keyword FROM portfolio_keywords WHERE portfolio_id = ?`,
+        [portfolio.portfolio_id]
+      );
+      portfolio.portfolio_keywords = keywords.map((k) => ({
+        id: k.id,
+        keyword: k.keyword
+      }));
     }
 
     res.json({ data: portfolios });
@@ -397,6 +363,7 @@ exports.getPortfoliosByUser = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch portfolios" });
   }
 };
+
 
 exports.deletePortfolioById = async (req, res) => {
   const portfolioId = req.params.portfolio_id;

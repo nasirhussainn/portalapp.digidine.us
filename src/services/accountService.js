@@ -75,9 +75,15 @@ exports.getAllUsers = async (req, res) => {
   const connection = await db.getConnection();
 
   try {
-    let { is_active, is_premium, page = 1, limit = 10 } = req.query;
+    let {
+      is_active,
+      is_premium,
+      search_keyword,
+      search_category,
+      page = 1,
+      limit = 10,
+    } = req.query;
 
-    // Convert query params
     const filters = [];
     const values = [];
 
@@ -93,30 +99,55 @@ exports.getAllUsers = async (req, res) => {
 
     const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
 
-    // Pagination setup
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    const limitClause = `LIMIT ? OFFSET ?`;
-
-    // Total count for pagination
-    const [totalCountRows] = await connection.query(
-      `SELECT COUNT(*) AS total FROM users ${whereClause}`,
-      values
-    );
-    const total = totalCountRows[0].total;
-
-    // Fetch filtered + paginated users
-    const [users] = await connection.query(
+    // Fetch base users
+    const [allUsers] = await connection.query(
       `SELECT id, email, is_premium, is_active, created_at, updated_at 
        FROM users 
        ${whereClause}
-       ORDER BY created_at DESC
-       ${limitClause}`,
-      [...values, parseInt(limit), parseInt(offset)]
+       ORDER BY created_at DESC`,
+      values
     );
 
-    // Enrich with profile & interests
+    // Filter users by search_keyword and/or search_category
+    let filteredUsers = allUsers;
+
+    if (search_keyword || search_category) {
+      const userIdSet = new Set();
+
+      if (search_keyword) {
+        const [keywordUsers] = await connection.query(
+          `SELECT DISTINCT ui.user_id 
+           FROM user_interests ui
+           JOIN keywords k ON ui.keyword_id = k.id
+           WHERE LOWER(k.name) LIKE ?`,
+          [`%${search_keyword.toLowerCase()}%`]
+        );
+        keywordUsers.forEach((row) => userIdSet.add(row.user_id));
+      }
+
+      if (search_category) {
+        const [categoryUsers] = await connection.query(
+          `SELECT DISTINCT ui.user_id 
+           FROM user_interests ui
+           JOIN categories c ON ui.category_id = c.id
+           WHERE LOWER(c.name) LIKE ?`,
+          [`%${search_category.toLowerCase()}%`]
+        );
+        categoryUsers.forEach((row) => userIdSet.add(row.user_id));
+      }
+
+      // Keep users whose IDs match either keyword or category
+      filteredUsers = allUsers.filter((user) => userIdSet.has(user.id));
+    }
+
+    // Pagination
+    const total = filteredUsers.length;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const paginatedUsers = filteredUsers.slice(offset, offset + parseInt(limit));
+
+    // Enrich user info
     const enrichedUsers = await Promise.all(
-      users.map(async (user) => {
+      paginatedUsers.map(async (user) => {
         const [profile] = await connection.query(
           "SELECT * FROM user_profiles WHERE user_id = ?",
           [user.id]
@@ -143,8 +174,7 @@ exports.getAllUsers = async (req, res) => {
 
         const userProfile = profile[0] || {};
         if (userProfile.profile_image) {
-          userProfile.profile_image =
-            process.env.CLIENT_URL + userProfile.profile_image;
+          userProfile.profile_image = process.env.CLIENT_URL + userProfile.profile_image;
         }
 
         return {
@@ -173,6 +203,8 @@ exports.getAllUsers = async (req, res) => {
     connection.release();
   }
 };
+
+
 
 exports.getPremiumUsers = async (_, res) => {
   const connection = await db.getConnection();

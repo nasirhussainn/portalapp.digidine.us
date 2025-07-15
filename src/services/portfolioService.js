@@ -496,3 +496,52 @@ exports.deletePortfoliosByUser = async (req, res) => {
     connection.release();
   }
 };
+
+exports.deletePortfolioVideo = async (req, res) => {
+  const portfolio_id = req.params.portfolio_id;
+
+  if (!portfolio_id) {
+    return res.status(400).json({ message: "Portfolio ID is required." });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // ✅ Check if portfolio exists
+    const [rows] = await connection.query(
+      "SELECT * FROM user_portfolio WHERE id = ?",
+      [portfolio_id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "Portfolio not found." });
+    }
+
+    const currentVideoPath = rows[0].video
+      ? path.join(__dirname, "..", rows[0].video)
+      : null;
+
+    // ✅ Update DB to remove video path
+    await connection.query(
+      "UPDATE user_portfolio SET video = NULL WHERE id = ?",
+      [portfolio_id]
+    );
+
+    // ✅ Delete file from disk if it exists
+    if (currentVideoPath && fs.existsSync(currentVideoPath)) {
+      fs.unlinkSync(currentVideoPath);
+    }
+
+    await connection.commit();
+    return res.json({ message: "Video deleted successfully." });
+  } catch (err) {
+    console.error("❌ Delete video error:", err);
+    await connection.rollback();
+    return res.status(500).json({ message: "Failed to delete video." });
+  } finally {
+    connection.release();
+  }
+};
+

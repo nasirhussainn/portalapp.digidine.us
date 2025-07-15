@@ -27,5 +27,7 @@ router.get("/get-by-user/:user_id", portfolioController.getPortfoliosByUser);
 router.delete("/delete/:portfolio_id", portfolioController.deletePortfolioById);
 router.delete("/delete-by-user/:user_id", portfolioController.deletePortfoliosByUser);
 
+router.delete("/:portfolio_id/video", portfolioController.deletePortfolioVideo);
+
 
 module.exports = router;

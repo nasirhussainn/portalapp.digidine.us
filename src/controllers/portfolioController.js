@@ -7,3 +7,4 @@ exports.getPortfolioById = (req, res, next) => portfolioService.getPortfolioById
 exports.getPortfoliosByUser = (req, res, next) => portfolioService.getPortfoliosByUser(req, res, next);
 exports.deletePortfolioById = (req, res, next) => portfolioService.deletePortfolioById(req, res, next);
 exports.deletePortfoliosByUser = (req, res, next) => portfolioService.deletePortfoliosByUser(req, res, next);
+exports.deletePortfolioVideo = (req, res, next) => portfolioService.deletePortfolioVideo(req, res, next);

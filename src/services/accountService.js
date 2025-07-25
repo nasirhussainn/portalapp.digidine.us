@@ -6,6 +6,15 @@ const { insertInterest } = require("../utils/helpers");
 
 const uploadDir = path.join(__dirname, "..", "uploads", "profile_images");
 
+function getClientIP(req) {
+  return (
+    req.headers["x-forwarded-for"]?.split(",")[0] || // Real IP if behind proxy
+    req.connection.remoteAddress ||
+    req.socket?.remoteAddress ||
+    null
+  );
+}
+
 exports.getSingleUser = async (req, res) => {
   const { email } = req.query;
   if (!email) return res.status(400).json({ message: "Email is required" });
@@ -54,6 +63,24 @@ exports.getSingleUser = async (req, res) => {
       userProfile.profile_image =
         process.env.CLIENT_URL + userProfile.profile_image;
     }
+
+    // --------------------------- track user profile visit ------------------------ //
+    const visitorIP = getClientIP(req);
+
+    const isValidIP = (ip) =>
+      typeof ip === "string" && /^(\d{1,3}\.){3}\d{1,3}$/.test(ip) || /^[a-fA-F0-9:]+$/.test(ip);
+    
+    if (visitorIP && isValidIP(visitorIP)) {
+      try {
+        await connection.query(
+          `INSERT IGNORE INTO profile_visits (user_id, visitor_ip) VALUES (?, ?)`,
+          [user.id, visitorIP]
+        );
+      } catch (visitErr) {
+        console.error("❌ Error logging profile visit:", visitErr.message);
+      }
+    }
+    // ----------------------------------------------------------------------------- //
     res.json({
       ...user,
       profile: userProfile,
@@ -82,6 +109,7 @@ exports.getAllUsers = async (req, res) => {
       search_category,
       page = 1,
       limit = 10,
+      ranked = false,
     } = req.query;
 
     const filters = [];
@@ -99,8 +127,8 @@ exports.getAllUsers = async (req, res) => {
 
     const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
 
-    // Fetch base users
-    const [allUsers] = await connection.query(
+    // Step 1: Fetch filtered base users
+    const [baseUsers] = await connection.query(
       `SELECT id, email, is_premium, is_active, created_at, updated_at 
        FROM users 
        ${whereClause}
@@ -108,9 +136,9 @@ exports.getAllUsers = async (req, res) => {
       values
     );
 
-    // Filter users by search_keyword and/or search_category
-    let filteredUsers = allUsers;
+    let filteredUsers = baseUsers;
 
+    // Step 2: Further filter by category and keyword (if provided)
     if (search_keyword || search_category) {
       const userIdSet = new Set();
 
@@ -122,7 +150,7 @@ exports.getAllUsers = async (req, res) => {
            WHERE LOWER(k.name) LIKE ?`,
           [`%${search_keyword.toLowerCase()}%`]
         );
-        keywordUsers.forEach((row) => userIdSet.add(row.user_id));
+        keywordUsers.forEach(row => userIdSet.add(row.user_id));
       }
 
       if (search_category) {
@@ -133,19 +161,53 @@ exports.getAllUsers = async (req, res) => {
            WHERE LOWER(c.name) LIKE ?`,
           [`%${search_category.toLowerCase()}%`]
         );
-        categoryUsers.forEach((row) => userIdSet.add(row.user_id));
+        categoryUsers.forEach(row => userIdSet.add(row.user_id));
       }
 
-      // Keep users whose IDs match either keyword or category
-      filteredUsers = allUsers.filter((user) => userIdSet.has(user.id));
+      filteredUsers = baseUsers.filter(user => userIdSet.has(user.id));
     }
 
-    // Pagination
+    // Step 3: Apply ranking if required
+    if (ranked === "true" || ranked === true) {
+      const userIds = filteredUsers.map(user => user.id);
+      if (userIds.length === 0) {
+        return res.json({
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          totalPages: 0,
+          users: [],
+        });
+      }
+
+      const [rankedRows] = await connection.query(
+        `SELECT user_id, COUNT(*) AS total_visits
+         FROM profile_visits
+         WHERE user_id IN (?)
+         GROUP BY user_id
+         ORDER BY total_visits DESC`,
+        [userIds]
+      );
+
+      const rankedMap = new Map();
+      rankedRows.forEach(row => rankedMap.set(row.user_id, row.total_visits));
+
+      // Sort filteredUsers by visits
+      filteredUsers = filteredUsers
+        .filter(user => rankedMap.has(user.id))
+        .sort((a, b) => rankedMap.get(b.id) - rankedMap.get(a.id))
+        .map(user => ({
+          ...user,
+          total_visits: rankedMap.get(user.id),
+        }));
+    }
+
+    // Step 4: Pagination
     const total = filteredUsers.length;
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const paginatedUsers = filteredUsers.slice(offset, offset + parseInt(limit));
 
-    // Enrich user info
+    // Step 5: Enrich user data
     const enrichedUsers = await Promise.all(
       paginatedUsers.map(async (user) => {
         const [profile] = await connection.query(
@@ -196,6 +258,7 @@ exports.getAllUsers = async (req, res) => {
       totalPages: Math.ceil(total / limit),
       users: enrichedUsers,
     });
+
   } catch (err) {
     console.error("❌ Get all users error:", err);
     res.status(500).json({ error: "Server error" });
@@ -203,7 +266,6 @@ exports.getAllUsers = async (req, res) => {
     connection.release();
   }
 };
-
 
 
 exports.getPremiumUsers = async (_, res) => {

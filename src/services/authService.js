@@ -116,19 +116,35 @@ exports.activateAccount = async (req, res) => {
   const { token } = req.params;
 
   try {
+    // Step 1: Look up user by token
     const [results] = await db.execute(
       "SELECT * FROM users WHERE activation_token = ?",
       [token]
     );
 
     if (!results.length) {
+      // Step 2: If token not found, check if account already active
+      const [activeUser] = await db.execute(
+        "SELECT * FROM users WHERE activation_token IS NULL AND is_active = true"
+      );
+
+      if (activeUser.length) {
+        return sendResponse(req, res, {
+          status: "info",
+          title: "Already Activated",
+          message: "Your account is already active. You can log in directly."
+        });
+      }
+
+      // Step 3: Otherwise, invalid/expired link
       return sendResponse(req, res, {
         status: "error",
         title: "Activation Failed",
-        message: "Your activation link has expired. Please request a new one."
+        message: "Your activation link is invalid."
       });
     }
 
+    // Step 4: Activate account
     const user = results[0];
     await db.execute(
       "UPDATE users SET is_active = true, activation_token = NULL WHERE id = ?",

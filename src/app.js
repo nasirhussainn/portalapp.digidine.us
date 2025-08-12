@@ -7,6 +7,10 @@ const portfolioRoutes = require('./routes/portfolioRoutes');
 const portfolioImageRoutes = require('./routes/portfolioImageRoutes');
 const portfolioKeywordRoutes = require('./routes/portfolioKeywordRoutes');
 
+// Set EJS as template engine
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -18,7 +22,6 @@ app.use('/api/account', accountRoutes)
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/portfolio', portfolioImageRoutes);
 app.use('/api/portfolio', portfolioKeywordRoutes);
-
 
 // Default error handler
 app.use((err, req, res, next) => {

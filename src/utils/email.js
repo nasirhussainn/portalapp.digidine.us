@@ -1,12 +1,31 @@
 const nodemailer = require("nodemailer");
 
+/**
+ * =========================
+ * 📧 TRANSPORT CONFIGURATION
+ * =========================
+ */
+
+// ===== OPTION 1: Gmail =====
+// const transporter = nodemailer.createTransport({
+//   service: "gmail",
+//   auth: {
+//     user: process.env.EMAIL_USER,
+//     pass: process.env.EMAIL_PASS,
+//   },
+// });
+
+// ===== OPTION 2: noreply@softechinc.ai =====
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "softechinc.ai",       // Outgoing server
+  port: 465,                   // SMTP port for SSL/TLS
+  secure: true,                // true for port 465
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: process.env.EMAIL_USER, // Email address
+    pass: process.env.EMAIL_PASS,  // Store in .env for security
   },
 });
+
 
 /**
  * 🔐 Account Activation Email
@@ -14,7 +33,7 @@ const transporter = nodemailer.createTransport({
 exports.sendActivationEmail = (to, token) => {
   const activationLink = `${process.env.CLIENT_URL}/api/auth/activate-account/${token}`;
   const mailOptions = {
-    from: `"Q Work Support" <${process.env.EMAIL_USER}>`,
+    from: `"Q Work Support" <${process.env.EMAIL_USER || "noreply@softechinc.ai"}>`,
     to,
     subject: "Activate Your Q Work Account",
     html: `
@@ -45,7 +64,7 @@ exports.sendResetEmail = (to, token) => {
   const resetLink = `${process.env.CLIENT_URL}/reset-password.html?token=${token}`;
 
   const mailOptions = {
-    from: `"Q Work Support" <${process.env.EMAIL_USER}>`,
+    from: `"Q Work Support" <${process.env.EMAIL_USER || "noreply@softechinc.ai"}>`,
     to,
     subject: "Reset Your Q Work Password",
     html: `

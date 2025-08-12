@@ -7,6 +7,7 @@ const { sendActivationEmail, sendResetEmail } = require("../utils/email");
 const { insertInterest, createUploadDir } = require("../utils/helpers");
 const fs = require("fs");
 const path = require("path");
+const sendResponse = require("../utils/sendResponse");
 
 // Ensure upload dir exists
 createUploadDir();
@@ -113,29 +114,43 @@ exports.signup = async (req, res) => {
 
 exports.activateAccount = async (req, res) => {
   const { token } = req.params;
+
   try {
     const [results] = await db.execute(
       "SELECT * FROM users WHERE activation_token = ?",
       [token]
     );
-    if (!results.length)
-      return res
-        .status(400)
-        .json({
-          message: "Your activation link has expired. Please request a new one",
-        });
+
+    if (!results.length) {
+      return sendResponse(req, res, {
+        status: "error",
+        title: "Activation Failed",
+        message: "Your activation link has expired. Please request a new one."
+      });
+    }
 
     const user = results[0];
     await db.execute(
       "UPDATE users SET is_active = true, activation_token = NULL WHERE id = ?",
       [user.id]
     );
-    res.json({ message: "Account activated!" });
+
+    sendResponse(req, res, {
+      status: "success",
+      title: "Account Activated!",
+      message: "Your account has been successfully activated. You can now log in."
+    });
+
   } catch (err) {
     console.error("❌ Activation error:", err);
-    res.status(500).json({ error: "DB error" });
+    sendResponse(req, res, {
+      status: "error",
+      title: "Server Error",
+      message: "Something went wrong while activating your account. Please try again later."
+    });
   }
 };
+
 
 exports.resendActivationEmail = async (req, res) => {
   const { email } = req.body;

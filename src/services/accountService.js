@@ -37,9 +37,9 @@ exports.getSingleUser = async (req, res) => {
       [user.id]
     );
 
-    // Get interests - UPDATED to include category_type
+    // Get interests - UPDATED 
     const [categories] = await connection.query(
-      `SELECT c.id, c.name, c.category_type FROM user_interests ui
+      `SELECT c.id, c.name FROM user_interests ui
        JOIN categories c ON ui.category_id = c.id
        WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
       [user.id]
@@ -244,9 +244,9 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
-        // UPDATED: Include category_type
+        // UPDATED:
         const [categories] = await connection.query(
-          `SELECT c.id, c.name, c.category_type FROM user_interests ui
+          `SELECT c.id, c.name FROM user_interests ui
            JOIN categories c ON ui.category_id = c.id
            WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
           [user.id]
@@ -339,9 +339,9 @@ exports.getPremiumUsers = async (_, res) => {
           [user.id]
         );
 
-        // UPDATED: Include category_type
+        // UPDATED: 
         const [categories] = await connection.query(
-          `SELECT c.id, c.name, c.category_type FROM user_interests ui
+          `SELECT c.id, c.name FROM user_interests ui
            JOIN categories c ON ui.category_id = c.id
            WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
           [user.id]

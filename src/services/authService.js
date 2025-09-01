@@ -23,8 +23,10 @@ exports.signup = async (req, res) => {
 
     const {
       email, password, firstName, lastName, contactEmail, dateOfBirth,
-      address, city, state, zipCode, shortDescription, longDescription,
-      availability, categories, keywords,
+      address, city, state, professional_headshot, professional_summary,
+      availability, categories, keywords, years_of_experience,
+      // New fields for experience, education, and pricing
+      experiences, education, pricing
     } = req.body;
 
     if (!email || !password)
@@ -48,21 +50,18 @@ exports.signup = async (req, res) => {
       profileImagePath = `/uploads/profile_images/${profileImageFileName}`;
     }
 
+    // Insert user profile
     await connection.query(
       `INSERT INTO user_profiles 
-        (user_id, profile_image, first_name, last_name, contact_email, date_of_birth, address, city, state, zip_code, short_description, long_description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (user_id, profile_image, first_name, last_name, contact_email, date_of_birth, address, city, state, professional_headshot, professional_summary, availability, years_of_experience)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId, profileImagePath, firstName, lastName, contactEmail,
-        dateOfBirth, address, city, state, zipCode, shortDescription, longDescription
+        dateOfBirth, address, city, state, professional_headshot, professional_summary, availability, years_of_experience
       ]
     );
 
-    await connection.query(
-      "INSERT INTO user_availability (user_id, availability) VALUES (?, ?)",
-      [userId, availability]
-    );
-
+    // Insert categories and keywords
     const categoryIds = await Promise.all(
       JSON.parse(categories || "[]").map((c) => insertInterest(connection, c, "category"))
     );
@@ -81,6 +80,49 @@ exports.signup = async (req, res) => {
       await connection.query(
         "INSERT INTO user_interests (user_id, keyword_id, interest_type) VALUES (?, ?, 'keyword')",
         [userId, id]
+      );
+    }
+
+    // ✅ Insert user experiences
+    const experiencesData = JSON.parse(experiences || "[]");
+    for (const exp of experiencesData) {
+      await connection.query(
+        `INSERT INTO user_experience 
+          (user_id, job_title, company_name, employment_type, location, start_date, end_date, is_current, description)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId, exp.job_title, exp.company_name, exp.employment_type || 'Full-time',
+          exp.location, exp.start_date, exp.end_date, exp.is_current || false, exp.description
+        ]
+      );
+    }
+
+    // ✅ Insert user education
+    const educationData = JSON.parse(education || "[]");
+    for (const edu of educationData) {
+      await connection.query(
+        `INSERT INTO user_education 
+          (user_id, institution_name, degree, field_of_study, start_date, end_date, is_current, grade, description)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId, edu.institution_name, edu.degree, edu.field_of_study,
+          edu.start_date, edu.end_date, edu.is_current || false, edu.grade, edu.description
+        ]
+      );
+    }
+
+    // ✅ Insert user pricing
+    const pricingData = JSON.parse(pricing || "{}");
+    if (pricingData.rate_type) {
+      await connection.query(
+        `INSERT INTO user_pricing 
+          (user_id, rate_type, hourly_rate, min_project_rate, is_negotiable, pricing_description)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          userId, pricingData.rate_type, pricingData.hourly_rate,
+          pricingData.min_project_rate, pricingData.is_negotiable !== false,
+          pricingData.pricing_description
+        ]
       );
     }
 
@@ -254,15 +296,9 @@ exports.getCurrentUser = async (req, res) => {
       [user.id]
     );
 
-    // Get availability
-    const [availability] = await connection.query(
-      "SELECT availability FROM user_availability WHERE user_id = ?",
-      [user.id]
-    );
-
-    // Get interests
+    // Get interests - UPDATED to include category_type
     const [categories] = await connection.query(
-      `SELECT c.id, c.name FROM user_interests ui
+      `SELECT c.id, c.name, c.category_type FROM user_interests ui
        JOIN categories c ON ui.category_id = c.id
        WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
       [user.id]
@@ -275,6 +311,38 @@ exports.getCurrentUser = async (req, res) => {
       [user.id]
     );
 
+    // ✅ Get user experiences
+    const [experiences] = await connection.query(
+      `SELECT id, job_title, company_name, employment_type, location, 
+              start_date, end_date, is_current, description,
+              created_at, updated_at
+       FROM user_experience 
+       WHERE user_id = ? 
+       ORDER BY is_current DESC, end_date DESC, start_date DESC`,
+      [user.id]
+    );
+
+    // ✅ Get user education
+    const [education] = await connection.query(
+      `SELECT id, institution_name, degree, field_of_study, 
+              start_date, end_date, is_current, grade, description,
+              created_at, updated_at
+       FROM user_education 
+       WHERE user_id = ? 
+       ORDER BY is_current DESC, end_date DESC, start_date DESC`,
+      [user.id]
+    );
+
+    // ✅ Get user pricing
+    const [pricing] = await connection.query(
+      `SELECT id, rate_type, hourly_rate, min_project_rate, 
+              is_negotiable, pricing_description,
+              created_at, updated_at
+       FROM user_pricing 
+       WHERE user_id = ?`,
+      [user.id]
+    );
+
     const userProfile = profile[0] || {};
     if (userProfile.profile_image) {
       userProfile.profile_image = process.env.CLIENT_URL + userProfile.profile_image;
@@ -283,11 +351,13 @@ exports.getCurrentUser = async (req, res) => {
     res.json({
       ...user,
       profile: userProfile,
-      availability: availability[0]?.availability || null,
       interests: {
         categories,
         keywords,
       },
+      experiences: experiences || [],
+      education: education || [],
+      pricing: pricing[0] || null
     });
   } catch (err) {
     console.error("❌ Get current user error:", err);

@@ -35,3 +35,5 @@ coverage/
 *.csv
 
 uploads/
+
+*.txt

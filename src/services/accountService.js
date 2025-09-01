@@ -37,15 +37,9 @@ exports.getSingleUser = async (req, res) => {
       [user.id]
     );
 
-    // Get availability
-    const [availability] = await connection.query(
-      "SELECT availability FROM user_availability WHERE user_id = ?",
-      [user.id]
-    );
-
-    // Get interests
+    // Get interests - UPDATED to include category_type
     const [categories] = await connection.query(
-      `SELECT c.id, c.name FROM user_interests ui
+      `SELECT c.id, c.name, c.category_type FROM user_interests ui
        JOIN categories c ON ui.category_id = c.id
        WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
       [user.id]
@@ -55,6 +49,38 @@ exports.getSingleUser = async (req, res) => {
       `SELECT k.id, k.name FROM user_interests ui
        JOIN keywords k ON ui.keyword_id = k.id
        WHERE ui.user_id = ? AND ui.interest_type = 'keyword'`,
+      [user.id]
+    );
+
+    // ✅ Get user experiences
+    const [experiences] = await connection.query(
+      `SELECT id, job_title, company_name, employment_type, location, 
+              start_date, end_date, is_current, description,
+              created_at, updated_at
+       FROM user_experience 
+       WHERE user_id = ? 
+       ORDER BY is_current DESC, end_date DESC, start_date DESC`,
+      [user.id]
+    );
+
+    // ✅ Get user education
+    const [education] = await connection.query(
+      `SELECT id, institution_name, degree, field_of_study, 
+              start_date, end_date, is_current, grade, description,
+              created_at, updated_at
+       FROM user_education 
+       WHERE user_id = ? 
+       ORDER BY is_current DESC, end_date DESC, start_date DESC`,
+      [user.id]
+    );
+
+    // ✅ Get user pricing
+    const [pricing] = await connection.query(
+      `SELECT id, rate_type, hourly_rate, min_project_rate, 
+              is_negotiable, pricing_description,
+              created_at, updated_at
+       FROM user_pricing 
+       WHERE user_id = ?`,
       [user.id]
     );
 
@@ -81,14 +107,17 @@ exports.getSingleUser = async (req, res) => {
       }
     }
     // ----------------------------------------------------------------------------- //
+
     res.json({
       ...user,
       profile: userProfile,
-      availability: availability[0]?.availability || null,
       interests: {
         categories,
         keywords,
       },
+      experiences: experiences || [],
+      education: education || [],
+      pricing: pricing[0] || null  // Single pricing object or null
     });
   } catch (err) {
     console.error("❌ Get single user error:", err);
@@ -207,7 +236,7 @@ exports.getAllUsers = async (req, res) => {
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const paginatedUsers = filteredUsers.slice(offset, offset + parseInt(limit));
 
-    // Step 5: Enrich user data
+    // Step 5: Enrich user data with all new fields
     const enrichedUsers = await Promise.all(
       paginatedUsers.map(async (user) => {
         const [profile] = await connection.query(
@@ -215,13 +244,9 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
-        const [availability] = await connection.query(
-          "SELECT availability FROM user_availability WHERE user_id = ?",
-          [user.id]
-        );
-
+        // UPDATED: Include category_type
         const [categories] = await connection.query(
-          `SELECT c.id, c.name FROM user_interests ui
+          `SELECT c.id, c.name, c.category_type FROM user_interests ui
            JOIN categories c ON ui.category_id = c.id
            WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
           [user.id]
@@ -234,6 +259,30 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
+        // ✅ Get user experiences (just count or basic info for listing)
+        const [experiences] = await connection.query(
+          `SELECT COUNT(*) as experience_count 
+           FROM user_experience 
+           WHERE user_id = ?`,
+          [user.id]
+        );
+
+        // ✅ Get user education (just count for listing)
+        const [education] = await connection.query(
+          `SELECT COUNT(*) as education_count 
+           FROM user_education 
+           WHERE user_id = ?`,
+          [user.id]
+        );
+
+        // ✅ Get user pricing (basic info)
+        const [pricing] = await connection.query(
+          `SELECT rate_type, hourly_rate, min_project_rate 
+           FROM user_pricing 
+           WHERE user_id = ?`,
+          [user.id]
+        );
+
         const userProfile = profile[0] || {};
         if (userProfile.profile_image) {
           userProfile.profile_image = process.env.CLIENT_URL + userProfile.profile_image;
@@ -242,11 +291,16 @@ exports.getAllUsers = async (req, res) => {
         return {
           ...user,
           profile: userProfile,
-          availability: availability[0]?.availability || null,
           interests: {
             categories,
             keywords,
           },
+          // Add summary information for listing view
+          stats: {
+            experience_count: experiences[0]?.experience_count || 0,
+            education_count: education[0]?.education_count || 0,
+          },
+          pricing: pricing[0] || null
         };
       })
     );
@@ -285,13 +339,9 @@ exports.getPremiumUsers = async (_, res) => {
           [user.id]
         );
 
-        const [availability] = await connection.query(
-          "SELECT availability FROM user_availability WHERE user_id = ?",
-          [user.id]
-        );
-
+        // UPDATED: Include category_type
         const [categories] = await connection.query(
-          `SELECT c.id, c.name FROM user_interests ui
+          `SELECT c.id, c.name, c.category_type FROM user_interests ui
            JOIN categories c ON ui.category_id = c.id
            WHERE ui.user_id = ? AND ui.interest_type = 'category'`,
           [user.id]
@@ -304,6 +354,30 @@ exports.getPremiumUsers = async (_, res) => {
           [user.id]
         );
 
+        // ✅ Get user experiences (just count for listing)
+        const [experiences] = await connection.query(
+          `SELECT COUNT(*) as experience_count 
+           FROM user_experience 
+           WHERE user_id = ?`,
+          [user.id]
+        );
+
+        // ✅ Get user education (just count for listing)
+        const [education] = await connection.query(
+          `SELECT COUNT(*) as education_count 
+           FROM user_education 
+           WHERE user_id = ?`,
+          [user.id]
+        );
+
+        // ✅ Get user pricing (basic info)
+        const [pricing] = await connection.query(
+          `SELECT rate_type, hourly_rate, min_project_rate 
+           FROM user_pricing 
+           WHERE user_id = ?`,
+          [user.id]
+        );
+
         const userProfile = profile[0] || {};
         if (userProfile.profile_image) {
           userProfile.profile_image =
@@ -313,11 +387,16 @@ exports.getPremiumUsers = async (_, res) => {
         return {
           ...user,
           profile: userProfile,
-          availability: availability[0]?.availability || null,
           interests: {
             categories,
             keywords,
           },
+          // Add summary information for premium users listing
+          stats: {
+            experience_count: experiences[0]?.experience_count || 0,
+            education_count: education[0]?.education_count || 0,
+          },
+          pricing: pricing[0] || null
         };
       })
     );
@@ -376,20 +455,40 @@ exports.deleteAccount = async (req, res) => {
         `SELECT image FROM portfolio_images WHERE portfolio_id IN (?)`,
         [portfolioIds]
       );
-      imagePaths = images.map((img) => path.join(__dirname, "..", img.image));
+      imagePaths = images
+        .filter((img) => img.image)
+        .map((img) => path.join(__dirname, "..", img.image));
     }
 
-    // ❌ Delete user (cascades all related tables)
+    // 🔍 Get additional file paths from new tables (if any)
+    // Note: Currently, user_experience, user_education, and user_pricing 
+    // don't store files, but we check for completeness
+
+    // ❌ Delete user (cascades all related tables including new ones)
+    // Due to ON DELETE CASCADE constraints, these will be automatically deleted:
+    // - user_profiles
+    // - user_interests
+    // - user_portfolio (and portfolio_images, portfolio_keywords via cascade)
+    // - profile_visits
+    // - user_experience (NEW)
+    // - user_education (NEW)
+    // - user_pricing (NEW)
     await connection.query("DELETE FROM users WHERE id = ?", [userId]);
 
     await connection.commit();
 
     // 🧹 Delete all files from disk after DB commit
-    const allPaths = [profileImagePath, ...videoPaths, ...imagePaths];
+    const allPaths = [
+      profileImagePath, 
+      ...videoPaths, 
+      ...imagePaths
+    ].filter(path => path); // Remove null/undefined paths
+
     for (const filePath of allPaths) {
       if (filePath && fs.existsSync(filePath)) {
         fs.unlink(filePath, (err) => {
           if (err) console.error("❌ Failed to delete file:", filePath, err);
+          else console.log("✅ Deleted file:", filePath);
         });
       }
     }
@@ -416,12 +515,15 @@ exports.updateProfile = async (req, res) => {
     address,
     city,
     state,
-    zipCode,
-    shortDescription,
-    longDescription,
+    professional_headshot,
+    professional_summary,
     availability,
+    years_of_experience,
     categories,
     keywords,
+    experiences,
+    education,
+    pricing
   } = req.body;
 
   if (!email) return res.status(400).json({ message: "Email is required" });
@@ -464,12 +566,14 @@ exports.updateProfile = async (req, res) => {
     // Update profile
     await connection.query(
       `UPDATE user_profiles SET 
-          profile_image = ?, first_name = ?, last_name = ?, contact_email = ?, 
-          date_of_birth = ?, address = ?, city = ?, state = ?, zip_code = ?, 
-          short_description = ?, long_description = ? 
+          profile_image = COALESCE(?, profile_image), 
+          first_name = ?, last_name = ?, contact_email = ?, 
+          date_of_birth = ?, address = ?, city = ?, state = ?, 
+          professional_headshot = ?, professional_summary = ?,  
+          availability = ?, years_of_experience = ?
         WHERE user_id = ?`,
       [
-        newProfileImagePath || profileRows[0].profile_image,
+        newProfileImagePath,
         firstName,
         lastName,
         contactEmail,
@@ -477,20 +581,12 @@ exports.updateProfile = async (req, res) => {
         address,
         city,
         state,
-        zipCode,
-        shortDescription,
-        longDescription,
+        professional_headshot,
+        professional_summary,
+        availability,
+        years_of_experience,
         userId,
       ]
-    );
-
-    // Replace availability
-    await connection.query("DELETE FROM user_availability WHERE user_id = ?", [
-      userId,
-    ]);
-    await connection.query(
-      "INSERT INTO user_availability (user_id, availability) VALUES (?, ?)",
-      [userId, availability]
     );
 
     // Replace interests
@@ -521,6 +617,73 @@ exports.updateProfile = async (req, res) => {
         "INSERT INTO user_interests (user_id, keyword_id, interest_type) VALUES (?, ?, 'keyword')",
         [userId, id]
       );
+    }
+
+    // ✅ Update user experiences (replace all)
+    await connection.query("DELETE FROM user_experience WHERE user_id = ?", [userId]);
+    const experiencesData = JSON.parse(experiences || "[]");
+    for (const exp of experiencesData) {
+      await connection.query(
+        `INSERT INTO user_experience 
+          (user_id, job_title, company_name, employment_type, location, start_date, end_date, is_current, description)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId, exp.job_title, exp.company_name, exp.employment_type || 'Full-time',
+          exp.location, exp.start_date, exp.end_date, exp.is_current || false, exp.description
+        ]
+      );
+    }
+
+    // ✅ Update user education (replace all)
+    await connection.query("DELETE FROM user_education WHERE user_id = ?", [userId]);
+    const educationData = JSON.parse(education || "[]");
+    for (const edu of educationData) {
+      await connection.query(
+        `INSERT INTO user_education 
+          (user_id, institution_name, degree, field_of_study, start_date, end_date, is_current, grade, description)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          userId, edu.institution_name, edu.degree, edu.field_of_study,
+          edu.start_date, edu.end_date, edu.is_current || false, edu.grade, edu.description
+        ]
+      );
+    }
+
+    // ✅ Update user pricing (upsert)
+    const pricingData = JSON.parse(pricing || "{}");
+    if (pricingData.rate_type) {
+      // Check if pricing record exists
+      const [existingPricing] = await connection.query(
+        "SELECT id FROM user_pricing WHERE user_id = ?",
+        [userId]
+      );
+
+      if (existingPricing.length > 0) {
+        // Update existing pricing
+        await connection.query(
+          `UPDATE user_pricing SET 
+            rate_type = ?, hourly_rate = ?, min_project_rate = ?, 
+            is_negotiable = ?, pricing_description = ?
+            WHERE user_id = ?`,
+          [
+            pricingData.rate_type, pricingData.hourly_rate,
+            pricingData.min_project_rate, pricingData.is_negotiable !== false,
+            pricingData.pricing_description, userId
+          ]
+        );
+      } else {
+        // Insert new pricing
+        await connection.query(
+          `INSERT INTO user_pricing 
+            (user_id, rate_type, hourly_rate, min_project_rate, is_negotiable, pricing_description)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            userId, pricingData.rate_type, pricingData.hourly_rate,
+            pricingData.min_project_rate, pricingData.is_negotiable !== false,
+            pricingData.pricing_description
+          ]
+        );
+      }
     }
 
     // Commit DB transaction before any file is written

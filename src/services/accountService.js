@@ -23,7 +23,7 @@ exports.getSingleUser = async (req, res) => {
   try {
     // Get base user (non-sensitive fields)
     const [users] = await connection.query(
-      "SELECT id, email, is_premium, is_active, created_at, updated_at FROM users WHERE email = ?",
+      "SELECT id, email, is_premium, is_active, status, created_at, updated_at FROM users WHERE email = ?",
       [email]
     );
     if (!users.length)
@@ -134,6 +134,7 @@ exports.getAllUsers = async (req, res) => {
     let {
       is_active,
       is_premium,
+      status, // ✅ New status filter
       search_keyword,
       search_category,
       page = 1,
@@ -144,21 +145,29 @@ exports.getAllUsers = async (req, res) => {
     const filters = [];
     const values = [];
 
+    // ✅ Active filter
     if (is_active !== undefined) {
       filters.push("is_active = ?");
       values.push(is_active === "true" || is_active === "1" ? 1 : 0);
     }
 
+    // ✅ Premium filter
     if (is_premium !== undefined) {
       filters.push("is_premium = ?");
       values.push(is_premium === "true" || is_premium === "1" ? 1 : 0);
     }
 
+    // ✅ Status filter
+    if (status) {
+      filters.push("status = ?");
+      values.push(status);
+    }
+
     const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
 
-    // Step 1: Fetch filtered base users
+    // ✅ Fetch filtered users
     const [baseUsers] = await connection.query(
-      `SELECT id, email, is_premium, is_active, created_at, updated_at 
+      `SELECT id, email, is_premium, is_active, status, created_at, updated_at 
        FROM users 
        ${whereClause}
        ORDER BY created_at DESC`,
@@ -167,7 +176,7 @@ exports.getAllUsers = async (req, res) => {
 
     let filteredUsers = baseUsers;
 
-    // Step 2: Further filter by category and keyword (if provided)
+    // ✅ Keyword or category filtering
     if (search_keyword || search_category) {
       const userIdSet = new Set();
 
@@ -196,7 +205,7 @@ exports.getAllUsers = async (req, res) => {
       filteredUsers = baseUsers.filter(user => userIdSet.has(user.id));
     }
 
-    // Step 3: Apply ranking if required
+    // ✅ Apply ranking if required
     if (ranked === "true" || ranked === true) {
       const userIds = filteredUsers.map(user => user.id);
       if (userIds.length === 0) {
@@ -221,7 +230,6 @@ exports.getAllUsers = async (req, res) => {
       const rankedMap = new Map();
       rankedRows.forEach(row => rankedMap.set(row.user_id, row.total_visits));
 
-      // Sort filteredUsers by visits
       filteredUsers = filteredUsers
         .filter(user => rankedMap.has(user.id))
         .sort((a, b) => rankedMap.get(b.id) - rankedMap.get(a.id))
@@ -231,12 +239,12 @@ exports.getAllUsers = async (req, res) => {
         }));
     }
 
-    // Step 4: Pagination
+    // ✅ Pagination
     const total = filteredUsers.length;
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const paginatedUsers = filteredUsers.slice(offset, offset + parseInt(limit));
 
-    // Step 5: Enrich user data with all new fields
+    // ✅ Enrich user data
     const enrichedUsers = await Promise.all(
       paginatedUsers.map(async (user) => {
         const [profile] = await connection.query(
@@ -244,7 +252,6 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
-        // UPDATED:
         const [categories] = await connection.query(
           `SELECT c.id, c.name FROM user_interests ui
            JOIN categories c ON ui.category_id = c.id
@@ -259,7 +266,6 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
-        // ✅ Get user experiences (just count or basic info for listing)
         const [experiences] = await connection.query(
           `SELECT COUNT(*) as experience_count 
            FROM user_experience 
@@ -267,7 +273,6 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
-        // ✅ Get user education (just count for listing)
         const [education] = await connection.query(
           `SELECT COUNT(*) as education_count 
            FROM user_education 
@@ -275,7 +280,6 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
-        // ✅ Get user pricing (basic info)
         const [pricing] = await connection.query(
           `SELECT rate_type, hourly_rate, min_project_rate 
            FROM user_pricing 
@@ -291,11 +295,7 @@ exports.getAllUsers = async (req, res) => {
         return {
           ...user,
           profile: userProfile,
-          interests: {
-            categories,
-            keywords,
-          },
-          // Add summary information for listing view
+          interests: { categories, keywords },
           stats: {
             experience_count: experiences[0]?.experience_count || 0,
             education_count: education[0]?.education_count || 0,

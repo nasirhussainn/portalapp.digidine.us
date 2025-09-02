@@ -33,11 +33,11 @@ exports.signup = async (req, res) => {
       return res.status(400).json({ message: "Email and password are required." });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const activationToken = crypto.randomBytes(20).toString("hex");
+    // const activationToken = crypto.randomBytes(20).toString("hex");
 
     const [userResult] = await connection.query(
-      "INSERT INTO users (email, password, activation_token, is_active) VALUES (?, ?, ?, ?)",
-      [email, hashedPassword, activationToken, false]
+      "INSERT INTO users (email, password, is_active) VALUES (?, ?, ?, ?)",
+      [email, hashedPassword, false]
     );
     const userId = userResult.insertId;
 
@@ -127,10 +127,10 @@ exports.signup = async (req, res) => {
     }
 
     await connection.commit();
-    await sendActivationEmail(email, activationToken);
+    // await sendActivationEmail(email);
 
     res.json({
-      message: "Signup successful. Please check your email to activate your account.",
+      message: "Signup successful. Admin will review your profile and approve within 2 days. You will receive an email notification once your account is approved, with instructions to activate your account."
     });
 
   } catch (error) {
@@ -254,12 +254,42 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: "User not found" });
 
     const user = results[0];
+
+    // ✅ Check if account is activated
     if (!user.is_active)
       return res.status(400).json({ message: "Account not activated" });
 
+    // ✅ Check user status
+    if (user.status === "pending") {
+      return res.status(403).json({
+        message:
+          "Your account is pending approval. You will receive an email once approved.",
+      });
+    }
+    if (user.status === "rejected") {
+      return res.status(403).json({
+        message:
+          "Your account has been rejected. Please contact support for more details.",
+      });
+    }
+    if (user.status === "banned") {
+      return res.status(403).json({
+        message:
+          "Your account has been banned due to policy violations. Contact support.",
+      });
+    }
+    if (user.status === "on_hold") {
+      return res.status(403).json({
+        message:
+          "Your account is currently on hold. Please wait or contact support.",
+      });
+    }
+
+    // ✅ Verify password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: "Invalid password" });
 
+    // ✅ Generate tokens
     const accessToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
       expiresIn: "1h",
     });
@@ -268,12 +298,14 @@ exports.login = async (req, res) => {
       process.env.JWT_REFRESH_SECRET,
       { expiresIn: "7d" }
     );
+
     res.json({ message: "Login successful", accessToken, refreshToken });
   } catch (err) {
     console.error("❌ Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 };
+
 
 exports.getCurrentUser = async (req, res) => {
   const connection = await db.getConnection();

@@ -537,8 +537,9 @@ exports.updateProfile = async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    // ✅ Fetch user details including status
     const [userRows] = await connection.query(
-      "SELECT id FROM users WHERE email = ?",
+      "SELECT id, status FROM users WHERE email = ?",
       [email]
     );
     if (!userRows.length) {
@@ -546,8 +547,9 @@ exports.updateProfile = async (req, res) => {
     }
 
     const userId = userRows[0].id;
+    const userStatus = userRows[0].status;
 
-    // Get old image path (for deletion after commit)
+    // ✅ Get old profile image path
     const [profileRows] = await connection.query(
       "SELECT profile_image FROM user_profiles WHERE user_id = ?",
       [userId]
@@ -556,160 +558,165 @@ exports.updateProfile = async (req, res) => {
       oldImagePath = path.join(__dirname, "..", profileRows[0].profile_image);
     }
 
-    // Handle image buffer, but DO NOT write it to disk yet
+    // ✅ Handle image upload (buffer only for now)
     if (req.file) {
       imageFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`;
       newProfileImagePath = `/uploads/profile_images/${imageFilename}`;
       tempBuffer = req.file.buffer;
     }
 
-    // Update profile
-    await connection.query(
-      `UPDATE user_profiles SET 
-          profile_image = COALESCE(?, profile_image), 
-          first_name = ?, last_name = ?, contact_email = ?, 
-          date_of_birth = ?, address = ?, city = ?, state = ?, 
-          professional_headshot = ?, professional_summary = ?,  
-          availability = ?, years_of_experience = ?
+    if (userStatus === "pending") {
+      // ✅ If status is pending → Only allow profile image update
+      if (!req.file) {
+        return res.status(403).json({
+          message: "Your profile is pending approval. Only profile image can be updated."
+        });
+      }
+
+      await connection.query(
+        `UPDATE user_profiles SET 
+          profile_image = COALESCE(?, profile_image)
         WHERE user_id = ?`,
-      [
-        newProfileImagePath,
-        firstName,
-        lastName,
-        contactEmail,
-        dateOfBirth,
-        address,
-        city,
-        state,
-        professional_headshot,
-        professional_summary,
-        availability,
-        years_of_experience,
-        userId,
-      ]
-    );
-
-    // Replace interests
-    await connection.query("DELETE FROM user_interests WHERE user_id = ?", [
-      userId,
-    ]);
-
-    const categoryIds = await Promise.all(
-      JSON.parse(categories || "[]").map((c) =>
-        insertInterest(connection, c, "category")
-      )
-    );
-    const keywordIds = await Promise.all(
-      JSON.parse(keywords || "[]").map((k) =>
-        insertInterest(connection, k, "keyword")
-      )
-    );
-
-    for (const id of categoryIds) {
-      await connection.query(
-        "INSERT INTO user_interests (user_id, category_id, interest_type) VALUES (?, ?, 'category')",
-        [userId, id]
+        [newProfileImagePath, userId]
       );
-    }
 
-    for (const id of keywordIds) {
+    } else {
+      // ✅ If status is not pending → Allow full update
       await connection.query(
-        "INSERT INTO user_interests (user_id, keyword_id, interest_type) VALUES (?, ?, 'keyword')",
-        [userId, id]
-      );
-    }
-
-    // ✅ Update user experiences (replace all)
-    await connection.query("DELETE FROM user_experience WHERE user_id = ?", [userId]);
-    const experiencesData = JSON.parse(experiences || "[]");
-    for (const exp of experiencesData) {
-      await connection.query(
-        `INSERT INTO user_experience 
-          (user_id, job_title, company_name, employment_type, location, start_date, end_date, is_current, description)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `UPDATE user_profiles SET 
+            profile_image = COALESCE(?, profile_image), 
+            first_name = ?, last_name = ?, contact_email = ?, 
+            date_of_birth = ?, address = ?, city = ?, state = ?, 
+            professional_headshot = ?, professional_summary = ?,  
+            availability = ?, years_of_experience = ?
+          WHERE user_id = ?`,
         [
-          userId, exp.job_title, exp.company_name, exp.employment_type || 'Full-time',
-          exp.location, exp.start_date, exp.end_date, exp.is_current || false, exp.description
+          newProfileImagePath,
+          firstName,
+          lastName,
+          contactEmail,
+          dateOfBirth,
+          address,
+          city,
+          state,
+          professional_headshot,
+          professional_summary,
+          availability,
+          years_of_experience,
+          userId,
         ]
       );
-    }
 
-    // ✅ Update user education (replace all)
-    await connection.query("DELETE FROM user_education WHERE user_id = ?", [userId]);
-    const educationData = JSON.parse(education || "[]");
-    for (const edu of educationData) {
-      await connection.query(
-        `INSERT INTO user_education 
-          (user_id, institution_name, degree, field_of_study, start_date, end_date, is_current, grade, description)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          userId, edu.institution_name, edu.degree, edu.field_of_study,
-          edu.start_date, edu.end_date, edu.is_current || false, edu.grade, edu.description
-        ]
+      // ✅ Replace interests
+      await connection.query("DELETE FROM user_interests WHERE user_id = ?", [userId]);
+
+      const categoryIds = await Promise.all(
+        JSON.parse(categories || "[]").map((c) => insertInterest(connection, c, "category"))
       );
-    }
-
-    // ✅ Update user pricing (upsert)
-    const pricingData = JSON.parse(pricing || "{}");
-    if (pricingData.rate_type) {
-      // Check if pricing record exists
-      const [existingPricing] = await connection.query(
-        "SELECT id FROM user_pricing WHERE user_id = ?",
-        [userId]
+      const keywordIds = await Promise.all(
+        JSON.parse(keywords || "[]").map((k) => insertInterest(connection, k, "keyword"))
       );
 
-      if (existingPricing.length > 0) {
-        // Update existing pricing
+      for (const id of categoryIds) {
         await connection.query(
-          `UPDATE user_pricing SET 
-            rate_type = ?, hourly_rate = ?, min_project_rate = ?, 
-            is_negotiable = ?, pricing_description = ?
-            WHERE user_id = ?`,
-          [
-            pricingData.rate_type, pricingData.hourly_rate,
-            pricingData.min_project_rate, pricingData.is_negotiable !== false,
-            pricingData.pricing_description, userId
-          ]
+          "INSERT INTO user_interests (user_id, category_id, interest_type) VALUES (?, ?, 'category')",
+          [userId, id]
         );
-      } else {
-        // Insert new pricing
+      }
+
+      for (const id of keywordIds) {
         await connection.query(
-          `INSERT INTO user_pricing 
-            (user_id, rate_type, hourly_rate, min_project_rate, is_negotiable, pricing_description)
-            VALUES (?, ?, ?, ?, ?, ?)`,
+          "INSERT INTO user_interests (user_id, keyword_id, interest_type) VALUES (?, ?, 'keyword')",
+          [userId, id]
+        );
+      }
+
+      // ✅ Update experiences
+      await connection.query("DELETE FROM user_experience WHERE user_id = ?", [userId]);
+      const experiencesData = JSON.parse(experiences || "[]");
+      for (const exp of experiencesData) {
+        await connection.query(
+          `INSERT INTO user_experience 
+            (user_id, job_title, company_name, employment_type, location, start_date, end_date, is_current, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            userId, pricingData.rate_type, pricingData.hourly_rate,
-            pricingData.min_project_rate, pricingData.is_negotiable !== false,
-            pricingData.pricing_description
+            userId, exp.job_title, exp.company_name, exp.employment_type || 'Full-time',
+            exp.location, exp.start_date, exp.end_date, exp.is_current || false, exp.description
           ]
         );
       }
+
+      // ✅ Update education
+      await connection.query("DELETE FROM user_education WHERE user_id = ?", [userId]);
+      const educationData = JSON.parse(education || "[]");
+      for (const edu of educationData) {
+        await connection.query(
+          `INSERT INTO user_education 
+            (user_id, institution_name, degree, field_of_study, start_date, end_date, is_current, grade, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId, edu.institution_name, edu.degree, edu.field_of_study,
+            edu.start_date, edu.end_date, edu.is_current || false, edu.grade, edu.description
+          ]
+        );
+      }
+
+      // ✅ Update pricing (upsert)
+      const pricingData = JSON.parse(pricing || "{}");
+      if (pricingData.rate_type) {
+        const [existingPricing] = await connection.query(
+          "SELECT id FROM user_pricing WHERE user_id = ?",
+          [userId]
+        );
+
+        if (existingPricing.length > 0) {
+          await connection.query(
+            `UPDATE user_pricing SET 
+              rate_type = ?, hourly_rate = ?, min_project_rate = ?, 
+              is_negotiable = ?, pricing_description = ?
+              WHERE user_id = ?`,
+            [
+              pricingData.rate_type, pricingData.hourly_rate,
+              pricingData.min_project_rate, pricingData.is_negotiable !== false,
+              pricingData.pricing_description, userId
+            ]
+          );
+        } else {
+          await connection.query(
+            `INSERT INTO user_pricing 
+              (user_id, rate_type, hourly_rate, min_project_rate, is_negotiable, pricing_description)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              userId, pricingData.rate_type, pricingData.hourly_rate,
+              pricingData.min_project_rate, pricingData.is_negotiable !== false,
+              pricingData.pricing_description
+            ]
+          );
+        }
+      }
     }
 
-    // Commit DB transaction before any file is written
     await connection.commit();
 
-    // ✅ Now save the image only if commit was successful
+    // ✅ Save image if uploaded
     if (tempBuffer && imageFilename) {
-      const diskPath = path.join(
-        __dirname,
-        "..",
-        "uploads",
-        "profile_images",
-        imageFilename
-      );
+      const diskPath = path.join(__dirname, "..", "uploads", "profile_images", imageFilename);
       fs.writeFileSync(diskPath, tempBuffer);
     }
 
-    // ✅ Delete old image if new one was uploaded
+    // ✅ Delete old image if replaced
     if (req.file && oldImagePath && fs.existsSync(oldImagePath)) {
       fs.unlink(oldImagePath, (err) => {
         if (err) console.error("❌ Failed to delete old image:", err);
-        else console.log("🧹 Old profile image deleted.");
       });
     }
 
-    res.json({ message: "Profile updated successfully" });
+    res.json({
+      message:
+        userStatus === "pending"
+          ? "Profile image updated successfully. Other details can be updated after approval."
+          : "Profile updated successfully"
+    });
   } catch (error) {
     console.error("❌ Update profile error:", error);
     await connection.rollback();
@@ -718,6 +725,7 @@ exports.updateProfile = async (req, res) => {
     connection.release();
   }
 };
+
 
 exports.updatePremiumStatus = async (req, res) => {
   const { email, isPremium } = req.body;

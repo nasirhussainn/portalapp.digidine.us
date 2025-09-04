@@ -9,5 +9,5 @@ router.get("/get-premium-users", accountController.getPremiumUsers);
 router.delete("/delete/:user_id", accountController.deleteAccount);
 router.put("/update-profile", upload.single("profileImage"), accountController.updateProfile);
 router.patch("/update-premium-status", accountController.updatePremiumStatus);
-router.patch(`/account/update-status/:userId`, accountController.updateUserStatus);
+router.patch("/update-status/:userId", accountController.updateUserStatus);
 module.exports = router;

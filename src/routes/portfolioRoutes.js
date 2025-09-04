@@ -32,5 +32,7 @@ router.delete("/delete-by-user/:user_id", portfolioController.deletePortfoliosBy
 
 router.delete("/:portfolio_id/video", portfolioController.deletePortfolioVideo);
 
+router.patch("/update-status/:portfolioId", portfolioController.updatePortfolioStatus);
+
 
 module.exports = router;

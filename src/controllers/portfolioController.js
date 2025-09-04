@@ -8,3 +8,4 @@ exports.getPortfoliosByUser = (req, res, next) => portfolioService.getPortfolios
 exports.deletePortfolioById = (req, res, next) => portfolioService.deletePortfolioById(req, res, next);
 exports.deletePortfoliosByUser = (req, res, next) => portfolioService.deletePortfoliosByUser(req, res, next);
 exports.deletePortfolioVideo = (req, res, next) => portfolioService.deletePortfolioVideo(req, res, next);
+exports.updatePortfolioStatus = (req, res, next) => portfolioService.updatePortfolioStatus(req, res, next);

@@ -116,7 +116,6 @@ exports.addPortfolio = async (req, res) => {
   }
 };
 
-
 exports.updatePortfolio = async (req, res) => {
   const { portfolio_id, title, description } = req.body;
   const videoFile = req.files?.video?.[0];
@@ -633,7 +632,6 @@ exports.deletePortfoliosByUser = async (req, res) => {
   }
 };
 
-
 exports.deletePortfolioVideo = async (req, res) => {
   const portfolio_id = req.params.portfolio_id;
 
@@ -677,6 +675,70 @@ exports.deletePortfolioVideo = async (req, res) => {
     console.error("❌ Delete video error:", err);
     await connection.rollback();
     return res.status(500).json({ message: "Failed to delete video." });
+  } finally {
+    connection.release();
+  }
+};
+
+exports.updatePortfolioStatus = async (req, res) => {
+  const { portfolioId } = req.params;
+  const { status } = req.body;
+
+  if (!portfolioId || !status) {
+    return res.status(400).json({ message: "portfolioId and status are required." });
+  }
+
+  const allowedStatuses = ["approved", "rejected", "hold"];
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({ message: `Invalid status. Allowed: ${allowedStatuses.join(", ")}` });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // ✅ Fetch existing portfolio
+    const [rows] = await connection.query(
+      "SELECT id, status AS current_status, user_id FROM user_portfolio WHERE id = ?",
+      [portfolioId]
+    );
+
+    if (!rows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Portfolio not found." });
+    }
+
+    const portfolio = rows[0];
+    const oldStatus = portfolio.current_status;
+
+    // ✅ Prevent redundant update
+    if (oldStatus === status) {
+      await connection.rollback();
+      return res.status(400).json({ message: "Portfolio already has this status." });
+    }
+
+    // ✅ Update status
+    await connection.query(
+      "UPDATE user_portfolio SET status = ?, updated_at = NOW() WHERE id = ?",
+      [status, portfolioId]
+    );
+
+    await connection.commit();
+
+    // (Optional) Send notification email to user
+    // sendPortfolioStatusChangeEmail(portfolio.user_id, oldStatus, status);
+
+    return res.json({
+      message: `Portfolio status updated from ${oldStatus} to ${status}`,
+      portfolioId,
+      previousStatus: oldStatus,
+      newStatus: status
+    });
+  } catch (err) {
+    console.error("❌ updatePortfolioStatus error:", err);
+    await connection.rollback();
+    return res.status(500).json({ message: "Failed to update portfolio status." });
   } finally {
     connection.release();
   }

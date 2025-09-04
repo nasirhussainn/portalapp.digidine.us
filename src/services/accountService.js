@@ -269,22 +269,28 @@ exports.getAllUsers = async (req, res) => {
           [user.id]
         );
 
+        // ✅ FULL experiences
         const [experiences] = await connection.query(
-          `SELECT COUNT(*) as experience_count 
+          `SELECT id, job_title, company_name, employment_type, location, 
+                  start_date, end_date, is_current, description, created_at, updated_at
            FROM user_experience 
-           WHERE user_id = ?`,
+           WHERE user_id = ? 
+           ORDER BY start_date DESC`,
           [user.id]
         );
 
+        // ✅ FULL education
         const [education] = await connection.query(
-          `SELECT COUNT(*) as education_count 
+          `SELECT id, institution_name, degree, field_of_study, start_date, end_date, 
+                  is_current, grade, description, created_at, updated_at
            FROM user_education 
-           WHERE user_id = ?`,
+           WHERE user_id = ?
+           ORDER BY start_date DESC`,
           [user.id]
         );
 
         const [pricing] = await connection.query(
-          `SELECT rate_type, hourly_rate, min_project_rate 
+          `SELECT rate_type, hourly_rate, min_project_rate, is_negotiable, pricing_description
            FROM user_pricing 
            WHERE user_id = ?`,
           [user.id]
@@ -299,10 +305,8 @@ exports.getAllUsers = async (req, res) => {
           ...user,
           profile: userProfile,
           interests: { categories, keywords },
-          stats: {
-            experience_count: experiences[0]?.experience_count || 0,
-            education_count: education[0]?.education_count || 0,
-          },
+          experiences,
+          education,
           pricing: pricing[0] || null
         };
       })
@@ -323,6 +327,7 @@ exports.getAllUsers = async (req, res) => {
     connection.release();
   }
 };
+
 
 
 exports.getPremiumUsers = async (_, res) => {
@@ -842,11 +847,10 @@ exports.updateProfileDetails = async (req, res) => {
     }
 
     // ✅ Update Experiences
-    if (experiences) {
+    if (Array.isArray(experiences)) {
       await connection.query("DELETE FROM user_experience WHERE user_id = ?", [userId]);
 
-      const experiencesData = JSON.parse(experiences || "[]");
-      for (const exp of experiencesData) {
+      for (const exp of experiences) {
         await connection.query(
           `INSERT INTO user_experience 
             (user_id, job_title, company_name, employment_type, location, start_date, end_date, is_current, description)
@@ -855,23 +859,22 @@ exports.updateProfileDetails = async (req, res) => {
             userId,
             exp.job_title,
             exp.company_name,
-            exp.employment_type || 'Full-time',
+            exp.employment_type || "Full-time",
             exp.location || null,
             exp.start_date || null,
             exp.end_date || null,
             exp.is_current || false,
-            exp.description || null
+            exp.description || null,
           ]
         );
       }
     }
 
     // ✅ Update Education
-    if (education) {
+    if (Array.isArray(education)) {
       await connection.query("DELETE FROM user_education WHERE user_id = ?", [userId]);
 
-      const educationData = JSON.parse(education || "[]");
-      for (const edu of educationData) {
+      for (const edu of education) {
         await connection.query(
           `INSERT INTO user_education 
             (user_id, institution_name, degree, field_of_study, start_date, end_date, is_current, grade, description)
@@ -885,7 +888,7 @@ exports.updateProfileDetails = async (req, res) => {
             edu.end_date || null,
             edu.is_current || false,
             edu.grade || null,
-            edu.description || null
+            edu.description || null,
           ]
         );
       }
@@ -893,7 +896,6 @@ exports.updateProfileDetails = async (req, res) => {
 
     await connection.commit();
     res.json({ message: "Experience and education updated successfully" });
-
   } catch (error) {
     console.error("❌ Update profile details error:", error);
     await connection.rollback();

@@ -726,7 +726,6 @@ exports.updateProfile = async (req, res) => {
   }
 };
 
-
 exports.updatePremiumStatus = async (req, res) => {
   const { email, isPremium } = req.body;
   if (!email) return res.status(400).json({ message: "Email is required" });
@@ -746,3 +745,94 @@ exports.updatePremiumStatus = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
+
+
+/**
+ * PUT /api/account/update-status/:userId
+ * body: { status: "approved" | "rejected" | "banned" | "hold" | ... }
+ */
+exports.updateUserStatus = async (req, res) => {
+  const { userId } = req.params;
+  const { status } = req.body;
+
+  if (!userId || !status) {
+    return res.status(400).json({ message: "userId and status are required" });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // fetch user
+    const [rows] = await connection.query(
+      "SELECT id, email, is_active, activation_token FROM users WHERE id = ?",
+      [userId]
+    );
+    if (!rows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: "User not found" });
+    }
+    const user = rows[0];
+
+    // 🔁 Make sure you actually have a `status` column in `users` table.
+    // If it's in another table, adjust this UPDATE accordingly.
+    await connection.query("UPDATE users SET status = ? WHERE id = ?", [
+      status,
+      userId,
+    ]);
+
+    let token = null;
+    let tokenExpiry = null;
+
+    if (status === "approved") {
+      // If not active yet → issue activation token
+      if (!user.is_active) {
+        token = crypto.randomBytes(32).toString("hex");
+        tokenExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48h
+
+        await connection.query(
+          "UPDATE users SET activation_token = ?, activation_token_expiry = ? WHERE id = ?",
+          [token, tokenExpiry, userId]
+        );
+      } else {
+        // Already active → clear any old token
+        await connection.query(
+          "UPDATE users SET activation_token = NULL, activation_token_expiry = NULL WHERE id = ?",
+          [userId]
+        );
+      }
+    } else {
+      // For non-approved statuses: clear token; optionally deactivate on severe statuses
+      await connection.query(
+        "UPDATE users SET activation_token = NULL, activation_token_expiry = NULL WHERE id = ?",
+        [userId]
+      );
+
+      if (["rejected", "banned", "suspended"].includes(status)) {
+        await connection.query(
+          "UPDATE users SET is_active = 0 WHERE id = ?",
+          [userId]
+        );
+      }
+    }
+
+    await connection.commit();
+
+    // 📧 Send email (outside the transaction)
+    // Your general mailer can include the activation link when status === 'approved'
+    sendStatusChangeEmail(user.email, status, token);
+
+    return res.json({
+      message: `User status updated to ${status}`,
+      issuedActivationToken: Boolean(token),
+      activationTokenExpiresAt: tokenExpiry,
+    });
+  } catch (err) {
+    console.error("❌ updateUserStatus error:", err);
+    await connection.rollback();
+    return res.status(500).json({ message: "Failed to update user status" });
+  } finally {
+    connection.release();
+  }
+};
+

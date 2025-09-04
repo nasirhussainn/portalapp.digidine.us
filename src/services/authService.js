@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const dayjs = require("dayjs");
 const db = require("../config/db");
-const { sendActivationEmail, sendResetEmail } = require("../utils/email");
+const { sendResetEmail } = require("../utils/email");
 const { insertInterest, createUploadDir } = require("../utils/helpers");
 const fs = require("fs");
 const path = require("path");
@@ -36,7 +36,7 @@ exports.signup = async (req, res) => {
     // const activationToken = crypto.randomBytes(20).toString("hex");
 
     const [userResult] = await connection.query(
-      "INSERT INTO users (email, password, is_active) VALUES (?, ?, ?, ?)",
+      "INSERT INTO users (email, password, is_active) VALUES (?, ?, ?)",
       [email, hashedPassword, false]
     );
     const userId = userResult.insertId;
@@ -255,34 +255,34 @@ exports.login = async (req, res) => {
 
     const user = results[0];
 
-    // ✅ Check if account is activated
-    if (!user.is_active)
-      return res.status(400).json({ message: "Account not activated" });
-
-    // ✅ Check user status
-    if (user.status === "pending") {
-      return res.status(403).json({
-        message:
-          "Your account is pending approval. You will receive an email once approved.",
-      });
-    }
-    if (user.status === "rejected") {
-      return res.status(403).json({
-        message:
-          "Your account has been rejected. Please contact support for more details.",
-      });
-    }
-    if (user.status === "banned") {
-      return res.status(403).json({
-        message:
-          "Your account has been banned due to policy violations. Contact support.",
-      });
-    }
-    if (user.status === "on_hold") {
-      return res.status(403).json({
-        message:
-          "Your account is currently on hold. Please wait or contact support.",
-      });
+    // ✅ Check account status & activation
+    if (!user.is_active) {
+      switch (user.status) {
+        case "pending":
+          return res.status(403).json({
+            message:
+              "Your account is pending approval. You will receive an email once approved.",
+          });
+        case "rejected":
+          return res.status(403).json({
+            message:
+              "Your account has been rejected. Contact support for more details.",
+          });
+        case "banned":
+          return res.status(403).json({
+            message:
+              "Your account has been banned due to policy violations. Contact support.",
+          });
+        case "on_hold":
+          return res.status(403).json({
+            message:
+              "Your account is currently on hold. Please wait or contact support.",
+          });
+        default:
+          return res.status(403).json({
+            message: "Your account is not active yet.",
+          });
+      }
     }
 
     // ✅ Verify password
@@ -299,13 +299,16 @@ exports.login = async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({ message: "Login successful", accessToken, refreshToken });
+    res.json({
+      message: "Login successful",
+      accessToken,
+      refreshToken,
+    });
   } catch (err) {
     console.error("❌ Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 };
-
 
 exports.getCurrentUser = async (req, res) => {
   const connection = await db.getConnection();

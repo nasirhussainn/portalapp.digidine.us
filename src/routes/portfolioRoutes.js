@@ -2,12 +2,14 @@ const express = require("express");
 const router = express.Router();
 const portfolioController = require("../controllers/portfolioController");
 const upload = require("../middlewares/multerPortfolio");
+const { max } = require("moment/moment");
 
 router.post(
   "/add",
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "images", maxCount: 10 },
+    { name: "supporting_document", maxCount: 1}
   ]),
   portfolioController.addPortfolio
 );
@@ -17,6 +19,7 @@ router.put(
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "images", maxCount: 10 },
+    { name: "supporting_document", maxCount: 1}
   ]),
   portfolioController.updatePortfolio
 );

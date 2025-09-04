@@ -1,8 +1,11 @@
 const db = require("../config/db");
 const fs = require("fs");
 const path = require("path");
+const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 
 const { insertInterest } = require("../utils/helpers");
+const { sendStatusChangeEmail } = require("../utils/email");
 
 const uploadDir = path.join(__dirname, "..", "uploads", "profile_images");
 
@@ -521,8 +524,6 @@ exports.updateProfile = async (req, res) => {
     years_of_experience,
     categories,
     keywords,
-    experiences,
-    education,
     pricing
   } = req.body;
 
@@ -631,36 +632,6 @@ exports.updateProfile = async (req, res) => {
         );
       }
 
-      // ✅ Update experiences
-      await connection.query("DELETE FROM user_experience WHERE user_id = ?", [userId]);
-      const experiencesData = JSON.parse(experiences || "[]");
-      for (const exp of experiencesData) {
-        await connection.query(
-          `INSERT INTO user_experience 
-            (user_id, job_title, company_name, employment_type, location, start_date, end_date, is_current, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            userId, exp.job_title, exp.company_name, exp.employment_type || 'Full-time',
-            exp.location, exp.start_date, exp.end_date, exp.is_current || false, exp.description
-          ]
-        );
-      }
-
-      // ✅ Update education
-      await connection.query("DELETE FROM user_education WHERE user_id = ?", [userId]);
-      const educationData = JSON.parse(education || "[]");
-      for (const edu of educationData) {
-        await connection.query(
-          `INSERT INTO user_education 
-            (user_id, institution_name, degree, field_of_study, start_date, end_date, is_current, grade, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            userId, edu.institution_name, edu.degree, edu.field_of_study,
-            edu.start_date, edu.end_date, edu.is_current || false, edu.grade, edu.description
-          ]
-        );
-      }
-
       // ✅ Update pricing (upsert)
       const pricingData = JSON.parse(pricing || "{}");
       if (pricingData.rate_type) {
@@ -763,9 +734,9 @@ exports.updateUserStatus = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // fetch user
+    // Fetch user with current status
     const [rows] = await connection.query(
-      "SELECT id, email, is_active, activation_token FROM users WHERE id = ?",
+      "SELECT id, email, status as current_status, is_active, activation_token FROM users WHERE id = ?",
       [userId]
     );
     if (!rows.length) {
@@ -773,9 +744,15 @@ exports.updateUserStatus = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
     const user = rows[0];
+    const oldStatus = user.current_status;
 
-    // 🔁 Make sure you actually have a `status` column in `users` table.
-    // If it's in another table, adjust this UPDATE accordingly.
+    // Don't update if status is the same
+    if (oldStatus === status) {
+      await connection.rollback();
+      return res.status(400).json({ message: "User already has this status" });
+    }
+
+    // Update user status
     await connection.query("UPDATE users SET status = ? WHERE id = ?", [
       status,
       userId,
@@ -783,31 +760,36 @@ exports.updateUserStatus = async (req, res) => {
 
     let token = null;
     let tokenExpiry = null;
+    let needsActivation = false;
 
     if (status === "approved") {
-      // If not active yet → issue activation token
-      if (!user.is_active) {
+      // Only issue activation token if:
+      // 1. User was previously "pending" (first-time approval)
+      // 2. User is not already active
+      if (oldStatus === "pending" && !user.is_active) {
         token = crypto.randomBytes(32).toString("hex");
         tokenExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48h
+        needsActivation = true;
 
         await connection.query(
           "UPDATE users SET activation_token = ?, activation_token_expiry = ? WHERE id = ?",
           [token, tokenExpiry, userId]
         );
       } else {
-        // Already active → clear any old token
+        // Re-approval (from hold/rejected) - just activate without token
         await connection.query(
-          "UPDATE users SET activation_token = NULL, activation_token_expiry = NULL WHERE id = ?",
+          "UPDATE users SET is_active = 1, activation_token = NULL, activation_token_expiry = NULL WHERE id = ?",
           [userId]
         );
       }
     } else {
-      // For non-approved statuses: clear token; optionally deactivate on severe statuses
+      // For non-approved statuses: clear any existing tokens
       await connection.query(
         "UPDATE users SET activation_token = NULL, activation_token_expiry = NULL WHERE id = ?",
         [userId]
       );
 
+      // Deactivate account for severe statuses
       if (["rejected", "banned", "suspended"].includes(status)) {
         await connection.query(
           "UPDATE users SET is_active = 0 WHERE id = ?",
@@ -818,12 +800,14 @@ exports.updateUserStatus = async (req, res) => {
 
     await connection.commit();
 
-    // 📧 Send email (outside the transaction)
-    // Your general mailer can include the activation link when status === 'approved'
-    sendStatusChangeEmail(user.email, status, token);
+    // Send status change email (outside the transaction)
+    sendStatusChangeEmail(user.email, oldStatus, status, token);
 
     return res.json({
-      message: `User status updated to ${status}`,
+      message: `User status updated from ${oldStatus} to ${status}`,
+      previousStatus: oldStatus,
+      newStatus: status,
+      needsActivation,
       issuedActivationToken: Boolean(token),
       activationTokenExpiresAt: tokenExpiry,
     });
@@ -836,3 +820,85 @@ exports.updateUserStatus = async (req, res) => {
   }
 };
 
+exports.updateProfileDetails = async (req, res) => {
+  const { userId } = req.params;
+  const { experiences, education } = req.body;
+
+  if (!userId) return res.status(400).json({ message: "User ID is required" });
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // ✅ Fetch user ID
+    const [userRows] = await connection.query(
+      "SELECT id FROM users WHERE id = ?",
+      [userId]
+    );
+
+    if (!userRows.length) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // ✅ Update Experiences
+    if (experiences) {
+      await connection.query("DELETE FROM user_experience WHERE user_id = ?", [userId]);
+
+      const experiencesData = JSON.parse(experiences || "[]");
+      for (const exp of experiencesData) {
+        await connection.query(
+          `INSERT INTO user_experience 
+            (user_id, job_title, company_name, employment_type, location, start_date, end_date, is_current, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId,
+            exp.job_title,
+            exp.company_name,
+            exp.employment_type || 'Full-time',
+            exp.location || null,
+            exp.start_date || null,
+            exp.end_date || null,
+            exp.is_current || false,
+            exp.description || null
+          ]
+        );
+      }
+    }
+
+    // ✅ Update Education
+    if (education) {
+      await connection.query("DELETE FROM user_education WHERE user_id = ?", [userId]);
+
+      const educationData = JSON.parse(education || "[]");
+      for (const edu of educationData) {
+        await connection.query(
+          `INSERT INTO user_education 
+            (user_id, institution_name, degree, field_of_study, start_date, end_date, is_current, grade, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId,
+            edu.institution_name,
+            edu.degree || null,
+            edu.field_of_study || null,
+            edu.start_date || null,
+            edu.end_date || null,
+            edu.is_current || false,
+            edu.grade || null,
+            edu.description || null
+          ]
+        );
+      }
+    }
+
+    await connection.commit();
+    res.json({ message: "Experience and education updated successfully" });
+
+  } catch (error) {
+    console.error("❌ Update profile details error:", error);
+    await connection.rollback();
+    res.status(500).json({ message: "Update failed" });
+  } finally {
+    connection.release();
+  }
+};

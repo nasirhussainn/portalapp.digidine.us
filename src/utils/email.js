@@ -141,7 +141,7 @@ exports.sendStatusChangeEmail = (to, oldStatus, newStatus, token = null) => {
           If you believe this decision was made in error or would like to understand the specific reasons, please don't hesitate to contact our support team for clarification.
         </p>
         <div style="text-align: center; margin: 30px 0;">
-          <a href="mailto:support@qwork.com" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+          <a href="mailto:support@softechinc.ai" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
             📧 Contact Support
           </a>
         </div>
@@ -170,7 +170,7 @@ exports.sendStatusChangeEmail = (to, oldStatus, newStatus, token = null) => {
           If you have questions about this decision or wish to discuss your account status, please contact our support team with your account details.
         </p>
         <div style="text-align: center; margin: 30px 0;">
-          <a href="mailto:support@qwork.com" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+          <a href="mailto:support@softechinc.ai" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
             Contact Support Team
           </a>
         </div>
@@ -198,7 +198,7 @@ exports.sendStatusChangeEmail = (to, oldStatus, newStatus, token = null) => {
           We appreciate your patience during this process. If you have any questions or need to provide additional information, please contact our support team.
         </p>
         <div style="text-align: center; margin: 30px 0;">
-          <a href="mailto:support@qwork.com" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+          <a href="mailto:support@softechinc.ai" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
             📧 Contact Support
           </a>
         </div>
@@ -223,7 +223,7 @@ exports.sendStatusChangeEmail = (to, oldStatus, newStatus, token = null) => {
           This change has been made by our administrative team. If you have any questions about this update, please don't hesitate to contact our support team.
         </p>
         <div style="text-align: center; margin: 30px 0;">
-          <a href="mailto:support@qwork.com" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+          <a href="mailto:support@softechinc.ai" style="display: inline-block; background: linear-gradient(135deg, #6c5ce7, #5a4fcf); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
             📧 Contact Support
           </a>
         </div>
@@ -295,5 +295,33 @@ exports.sendResetEmail = (to, token) => {
   transporter.sendMail(mailOptions, (err, info) => {
     if (err) console.error("❌ Reset email error:", err);
     else console.log("✅ Password reset email sent to:", to);
+  });
+};
+
+
+/**
+ * 🔁 Send Temporary Admin Password
+ */
+exports.sendAdminTempPassword = async (to, tempPassword) => {
+  const mailOptions = {
+    from: `"Admin Support" <${process.env.EMAIL_USER || "noreply@softechinc.ai"}>`,
+    to,
+    subject: "Temporary Admin Password",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px;border:1px solid #ddd;border-radius:10px;">
+        <h2 style="color:#C0392B;">Your Temporary Admin Password</h2>
+        <p>Hello Admin,</p>
+        <p>A temporary password has been generated for your account:</p>
+        <p style="font-weight:bold;font-size:16px;">${tempPassword}</p>
+        <p>Please log in and change it immediately for security reasons.</p>
+        <hr>
+        <p style="font-size:12px;color:#888;">Admin Portal | Support Team</p>
+      </div>
+    `,
+  };
+
+  transporter.sendMail(mailOptions, (err, info) => {
+    if (err) console.error("❌ Admin temp password email error:", err);
+    else console.log("✅ Admin temp password email sent to:", to);
   });
 };

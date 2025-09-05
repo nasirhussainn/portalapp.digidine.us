@@ -6,6 +6,7 @@ const accountRoutes = require('./routes/accountRoutes');
 const portfolioRoutes = require('./routes/portfolioRoutes');
 const portfolioImageRoutes = require('./routes/portfolioImageRoutes');
 const portfolioKeywordRoutes = require('./routes/portfolioKeywordRoutes');
+const adminRoutes = require('./routes/adminRoutes')
 
 // Set EJS as template engine
 app.set("view engine", "ejs");
@@ -22,6 +23,8 @@ app.use('/api/account', accountRoutes)
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/portfolio', portfolioImageRoutes);
 app.use('/api/portfolio', portfolioKeywordRoutes);
+app.use('/api/admin', adminRoutes)
+
 
 // Default error handler
 app.use((err, req, res, next) => {
